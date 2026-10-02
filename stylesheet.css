@@ -54,7 +54,7 @@
 .mf-fill { height: 6px; border-radius: 99px; background-color: #ffffff; }
 .mf-time { font-size: 11px; color: rgba(255,255,255,0.6); padding-top: 6px; }
 
-.mf-controls { spacing: 14px; padding-top: 10px; }
+.mf-controls { spacing: 10px; padding-top: 10px; }
 .mf-btn {
     padding: 8px;
     border-radius: 99px;
@@ -64,3 +64,10 @@
 .mf-btn:hover { background-color: rgba(255,255,255,0.14); }
 .mf-play { background-color: #ffffff; color: #111111; padding: 12px; }
 .mf-play:hover { background-color: rgba(255,255,255,0.85); }
+
+/* ---------- Shuffle / repeat ---------- */
+.mf-small { padding: 6px; }
+.mf-toggle-on { background-color: rgba(255,255,255,0.24); }
+
+/* ---------- Toggles (shuffle / repeat) ---------- */
+.mf-toggle-on { background-color: rgba(255,255,255,0.22); }
