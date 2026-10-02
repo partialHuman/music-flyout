@@ -1,0 +1,8 @@
+.mf-panel-box { spacing: 2px; padding: 0 4px; }
+.mf-bar { width: 3px; border-radius: 2px; background-color: #ffffff; }
+.mf-title { font-weight: bold; font-size: 110%; }
+.mf-artist { opacity: 0.7; }
+.mf-art { border-radius: 8px; }
+.mf-controls { spacing: 12px; padding-top: 8px; }
+.mf-btn { padding: 6px; border-radius: 99px; }
+.mf-btn:hover { background-color: rgba(255,255,255,0.15); }
