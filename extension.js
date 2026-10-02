@@ -130,6 +130,15 @@ const PlayerProxy = Gio.DBusProxy.makeProxyWrapper(`
   </interface>
 </node>`);
 
+// `vertical` was removed from St widgets in GNOME 51; `orientation` is the replacement.
+function vbox(params) {
+    try {
+        return new St.BoxLayout({...params, orientation: Clutter.Orientation.VERTICAL});
+    } catch (e) {
+        return new St.BoxLayout({...params, vertical: true});
+    }
+}
+
 function fmtTime(us) {
     const s = Math.max(0, Math.floor(us / 1e6));
     return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
@@ -191,6 +200,9 @@ class MusicIndicator extends PanelMenu.Button {
         this._lastScroll = 0;
         this.connect('scroll-event', (_a, event) => this._onScroll(event));
         this._controlsBox?.connect('scroll-event', (_a, event) => this._onScroll(event));
+        this._pressSeen = false;
+        this._clickGesture = null;
+        this._setupClicks();
         this._setupHover();
         this.connect('key-press-event', (_a, ev) => {
             const sym = ev.get_key_symbol();
@@ -322,12 +334,8 @@ class MusicIndicator extends PanelMenu.Button {
     vfunc_event(event) {
         const type = event.type();
         if (type === Clutter.EventType.BUTTON_PRESS) {
-            const c = this._cfg;
-            const b = event.get_button();
-            const action = b === Clutter.BUTTON_PRIMARY ? c.clickLeft
-                : b === Clutter.BUTTON_MIDDLE ? c.clickMiddle
-                : b === Clutter.BUTTON_SECONDARY ? c.clickRight : 'none';
-            this._runClickAction(action);
+            this._pressSeen = true;               // legacy event path works: the gesture path stands down
+            this._onMouseButton(event.get_button());
             return Clutter.EVENT_STOP;
         }
         if (type === Clutter.EventType.TOUCH_BEGIN) {   // touch screens: tap opens the card
@@ -335,6 +343,47 @@ class MusicIndicator extends PanelMenu.Button {
             return Clutter.EVENT_STOP;
         }
         return super.vfunc_event(event);
+    }
+
+    // GNOME 49+ handles panel-button clicks with Clutter.ClickGesture instead of raw events.
+    // Replace the stock gesture with our own so left/middle/right clicks reach us either way.
+    _setupClicks() {
+        let path = 'legacy event only';
+        try {
+            if (typeof Clutter.ClickGesture === 'function') {
+                let removed = 0;
+                for (const a of this.get_actions?.() ?? []) {
+                    if (a instanceof Clutter.ClickGesture) {
+                        this.remove_action(a);
+                        removed++;
+                    }
+                }
+                const gesture = new Clutter.ClickGesture();
+                gesture.connect('recognize', () => {
+                    if (this._pressSeen) {        // the press was already handled by vfunc_event
+                        this._pressSeen = false;
+                        return;
+                    }
+                    let button = Clutter.BUTTON_PRIMARY;
+                    try { button = gesture.get_button(); } catch (e) { /* older API: assume primary */ }
+                    this._onMouseButton(button);
+                });
+                this.add_action(gesture);
+                this._clickGesture = gesture;
+                path = `ClickGesture (removed ${removed} stock)`;
+            }
+        } catch (e) {
+            logError(e, 'Music Flyout: ClickGesture setup failed');
+        }
+        log(`Music Flyout: click handling = ${path}`);
+    }
+
+    _onMouseButton(button) {
+        const c = this._cfg;
+        const action = button === Clutter.BUTTON_PRIMARY ? c.clickLeft
+            : button === Clutter.BUTTON_MIDDLE ? c.clickMiddle
+            : button === Clutter.BUTTON_SECONDARY ? c.clickRight : 'none';
+        this._runClickAction(action);
     }
 
     _runClickAction(action) {
@@ -362,7 +411,7 @@ class MusicIndicator extends PanelMenu.Button {
     _buildCard() {
         const c = this._cfg;
         const W = this._innerW;
-        const content = new St.BoxLayout({vertical: true, style_class: 'mf-content', width: c.cardWidth});
+        const content = vbox({style_class: 'mf-content', width: c.cardWidth});
 
         // Album art
         const sizes = {small: 120, medium: 200, large: W};
@@ -383,7 +432,7 @@ class MusicIndicator extends PanelMenu.Button {
         content.add_child(this._artist);
 
         // Seek bar
-        this._progressBox = new St.BoxLayout({vertical: true, visible: false});
+        this._progressBox = vbox({visible: false});
         this._track = new St.Widget({style_class: 'mf-track', reactive: true, track_hover: true, width: W, height: 6});
         this._fill = new St.Widget({style_class: 'mf-fill', width: 0, height: 6});
         this._track.add_child(this._fill);
