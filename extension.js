@@ -149,6 +149,10 @@ class MusicIndicator extends PanelMenu.Button {
         this._session = new Soup.Session({timeout: 10});
 
         this._buildPanel();
+        if (this._controlsBox) {
+            this._controlsBox.add_style_class_name(this._cfg.controlsFirst ? 'mf-join-left' : 'mf-join-right');
+            this.add_style_class_name(this._cfg.controlsFirst ? 'mf-join-right' : 'mf-join-left');
+        }
         this._buildCard();
         this._applyAcrylic();
 
@@ -181,8 +185,9 @@ class MusicIndicator extends PanelMenu.Button {
         const c = this._cfg;
         const box = new St.BoxLayout({style_class: 'mf-pill-box', y_align: Clutter.ActorAlign.CENTER});
 
-        const controls = this._buildPanelControls();
-        if (controls && c.controlsFirst) box.add_child(controls);
+        // Panel controls live in their own panel item (a sibling of this button), NOT inside it:
+        // St.Buttons nested in a PanelMenu.Button lose their clicks to the parent's click handling.
+        this._controlsBox = this._buildPanelControls();
 
         if (c.showPlayerIcon) {
             this._pIcon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: 16, y_align: Clutter.ActorAlign.CENTER});
@@ -212,8 +217,6 @@ class MusicIndicator extends PanelMenu.Button {
             box.add_child(bars);
         }
 
-        if (controls && !c.controlsFirst) box.add_child(controls);
-
         if (box.get_n_children() === 0) {   // never leave an empty pill
             this._pIcon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: 16});
             box.add_child(this._pIcon);
@@ -223,12 +226,12 @@ class MusicIndicator extends PanelMenu.Button {
 
     _buildPanelControls() {
         const c = this._cfg;
-        const box = new St.BoxLayout({style_class: 'mf-pcontrols', y_align: Clutter.ActorAlign.CENTER});
+        const inner = new St.BoxLayout({style_class: 'mf-pcontrols', y_align: Clutter.ActorAlign.CENTER});
         const add = (enabled, icon, fn, registry) => {
             if (!enabled) return;
             const btn = this._makeButton(icon, 14, 'mf-pbtn', fn);
             registry?.push(btn);
-            box.add_child(btn);
+            inner.add_child(btn);
         };
         add(c.panelShuffle, 'media-playlist-shuffle-symbolic', () => this._toggleShuffle(), this._shuffleBtns);
         add(c.panelPrevious, 'media-skip-backward-symbolic', () => this._active()?.PreviousRemote());
@@ -237,7 +240,16 @@ class MusicIndicator extends PanelMenu.Button {
         add(c.panelSkipForward, 'media-seek-forward-symbolic', () => this._skip(1), this._skipBtns);
         add(c.panelNext, 'media-skip-forward-symbolic', () => this._active()?.NextRemote());
         add(c.panelLoop, 'media-playlist-repeat-symbolic', () => this._cycleLoop(), this._loopBtns);
-        return box.get_n_children() > 0 ? box : null;
+        if (inner.get_n_children() === 0) return null;
+
+        const box = new PanelMenu.ButtonBox();
+        box.add_style_class_name('mf-pill');
+        box.add_child(inner);
+        return box;
+    }
+
+    get controlsBox() {
+        return this._controlsBox ?? null;
     }
 
     // Middle-click the pill = play/pause
@@ -524,6 +536,7 @@ class MusicIndicator extends PanelMenu.Button {
         const name = this._activeName();
 
         this.visible = !!p || !c.hideWhenIdle;
+        if (this._controlsBox) this._controlsBox.visible = this.visible;
         this._rebuildSwitcher();
         if (this._pIcon) this._applyPlayerIcon(this._pIcon, name);
         this._applyPlayerIcon(this._artIcon, name);
@@ -854,12 +867,22 @@ export default class MusicFlyoutExtension extends Extension {
         const pos = this._settings.get_string('panel-position');
         const box = ['left', 'center', 'right'].includes(pos) ? pos : 'center';
         this._indicator = new MusicIndicator(this._settings, this);
+        const controls = this._indicator.controlsBox;
+        const first = this._settings.get_boolean('controls-first');
+        const addControls = () =>
+            Main.panel.addToStatusArea(`${this.uuid}-controls`, controls, 0, box);
+
+        // Each addToStatusArea() inserts at index 0, so the item added last ends up leftmost.
+        if (controls && !first) addControls();
         Main.panel.addToStatusArea(this.uuid, this._indicator, 0, box);
+        if (controls && first) addControls();
     }
 
     _destroyIndicator() {
+        const controls = this._indicator?.controlsBox;
         this._indicator?.cleanup();
         this._indicator?.destroy();
+        controls?.destroy();
         this._indicator = null;
     }
 
