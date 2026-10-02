@@ -59,6 +59,15 @@ function readConfig(s) {
         volumeTarget: str('volume-scroll-target'),
         invertScrollAnim: b('invert-scroll-animation'),
         invertScroll: b('invert-scroll-direction'),
+        secondaryScroll: b('secondary-scroll'),
+        secondaryAction: str('secondary-scroll-action'),
+        secondaryModifier: str('secondary-scroll-modifier'),
+        clickLeft: str('click-left'),
+        clickMiddle: str('click-middle'),
+        clickRight: str('click-right'),
+        hoverOpen: b('hover-open'),
+        hoverOpenDelay: i('hover-open-delay'),
+        hoverCloseDelay: i('hover-close-delay'),
         showVisualizer: b('show-visualizer'),
         barCount: i('bar-count'),
         useCava: b('use-cava'),
@@ -138,6 +147,16 @@ class MusicIndicator extends PanelMenu.Button {
 
         this._ext = extension;
         this._cfg = readConfig(settings);
+
+        // The default "any click toggles the menu" behaviour is replaced by configurable click actions.
+        this._allowToggle = false;
+        const origToggle = this.menu.toggle.bind(this.menu);
+        this.menu.toggle = () => { if (this._allowToggle) origToggle(); };
+        this._openedByHover = false;
+        this._hoverOpenId = 0;
+        this._hoverWatchId = 0;
+        this._outsideSince = 0;
+        this._iconCache = new Map();
         this._innerW = this._cfg.cardWidth - 2 * CARD_PAD;
 
         this._players = new Map();
@@ -172,13 +191,30 @@ class MusicIndicator extends PanelMenu.Button {
         this._lastScroll = 0;
         this.connect('scroll-event', (_a, event) => this._onScroll(event));
         this._controlsBox?.connect('scroll-event', (_a, event) => this._onScroll(event));
-        if (this._cfg.scrollControls && this._cfg.scrollAction === 'change-volume' &&
-            this._cfg.volumeTarget === 'system')
+        this._setupHover();
+        this.connect('key-press-event', (_a, ev) => {
+            const sym = ev.get_key_symbol();
+            if (sym === Clutter.KEY_Return || sym === Clutter.KEY_KP_Enter || sym === Clutter.KEY_space) {
+                this._toggleCard();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
+        });
+
+        const c0 = this._cfg;
+        const usesVolume = c0.scrollAction === 'change-volume' ||
+            (c0.secondaryScroll && c0.secondaryAction === 'change-volume');
+        if (c0.scrollControls && usesVolume && c0.volumeTarget === 'system')
             this._openMixer();
 
         this.menu.connect('open-state-changed', (_m, open) => {
-            if (open) this._startPolling();
-            else this._stopPolling();
+            if (open) {
+                this._startPolling();
+            } else {
+                this._stopPolling();
+                this._openedByHover = false;
+                this._stopHoverWatch();
+            }
         });
 
         this._nameSub = Gio.DBus.session.signal_subscribe(
@@ -282,14 +318,44 @@ class MusicIndicator extends PanelMenu.Button {
         return this._controlsBox ?? null;
     }
 
-    // Middle-click the pill = play/pause
+    // Left / middle / right click actions (defaults: play-pause / none / open card)
     vfunc_event(event) {
-        if (event.type() === Clutter.EventType.BUTTON_PRESS &&
-            event.get_button() === Clutter.BUTTON_MIDDLE) {
-            this._active()?.PlayPauseRemote();
+        const type = event.type();
+        if (type === Clutter.EventType.BUTTON_PRESS) {
+            const c = this._cfg;
+            const b = event.get_button();
+            const action = b === Clutter.BUTTON_PRIMARY ? c.clickLeft
+                : b === Clutter.BUTTON_MIDDLE ? c.clickMiddle
+                : b === Clutter.BUTTON_SECONDARY ? c.clickRight : 'none';
+            this._runClickAction(action);
+            return Clutter.EVENT_STOP;
+        }
+        if (type === Clutter.EventType.TOUCH_BEGIN) {   // touch screens: tap opens the card
+            this._toggleCard();
             return Clutter.EVENT_STOP;
         }
         return super.vfunc_event(event);
+    }
+
+    _runClickAction(action) {
+        switch (action) {
+        case 'play-pause': this._active()?.PlayPauseRemote(); break;
+        case 'open-card': this._toggleCard(); break;
+        case 'next': this._active()?.NextRemote(); break;
+        case 'previous': this._active()?.PreviousRemote(); break;
+        default: break;
+        }
+    }
+
+    _toggleCard() {
+        if (this.menu.isOpen && this._openedByHover) {   // opened by hover: pin it open
+            this._openedByHover = false;
+            this._stopHoverWatch();
+            return;
+        }
+        this._allowToggle = true;
+        this.menu.toggle();
+        this._allowToggle = false;
     }
 
     // ================================================================= CARD
@@ -474,12 +540,34 @@ class MusicIndicator extends PanelMenu.Button {
         this._lastScroll = now;
 
         this._jump(dir);
-        this._doScroll(this._cfg.invertScroll ? -dir : dir);
+        this._doScroll(this._cfg.invertScroll ? -dir : dir, this._scrollActionFor(event));
         return Clutter.EVENT_STOP;
     }
 
-    _doScroll(dir) {
-        switch (this._cfg.scrollAction) {
+    // Modifier keys currently held, as a Set of 'ctrl' | 'alt' | 'shift' | 'super'
+    _heldModifiers(event) {
+        let state = 0;
+        try { state = event.get_state(); } catch (e) { state = global.get_pointer()[2]; }
+        const T = Clutter.ModifierType;
+        const held = new Set();
+        if (state & T.CONTROL_MASK) held.add('ctrl');
+        if (state & T.MOD1_MASK) held.add('alt');
+        if (state & T.SHIFT_MASK) held.add('shift');
+        if (state & ((T.SUPER_MASK ?? 0) | T.MOD4_MASK)) held.add('super');
+        return held;
+    }
+
+    _scrollActionFor(event) {
+        const c = this._cfg;
+        if (!c.secondaryScroll) return c.scrollAction;
+        const want = new Set(c.secondaryModifier.split('-'));
+        const held = this._heldModifiers(event);
+        const match = want.size === held.size && [...want].every(m => held.has(m));
+        return match ? c.secondaryAction : c.scrollAction;
+    }
+
+    _doScroll(dir, action) {
+        switch (action) {
         case 'change-track':
             if (dir > 0) this._active()?.NextRemote();
             else this._active()?.PreviousRemote();
@@ -556,6 +644,87 @@ class MusicIndicator extends PanelMenu.Button {
                 },
             });
         }
+    }
+
+    // ================================================================= HOVER
+    _setupHover() {
+        const onHover = () => this._onPillHover();
+        this.connect('notify::hover', onHover);
+        this._controlsBox?.connect('notify::hover', onHover);
+    }
+
+    _pillHovered() {
+        return this.hover || (this._controlsBox?.hover ?? false);
+    }
+
+    _onPillHover() {
+        if (!this._cfg.hoverOpen || this._destroyed) return;
+        if (this._pillHovered()) {
+            if (this.menu.isOpen || this._hoverOpenId) return;
+            this._hoverOpenId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, this._cfg.hoverOpenDelay, () => {
+                this._hoverOpenId = 0;
+                if (!this._destroyed && this._pillHovered() && !this.menu.isOpen) {
+                    this._openedByHover = true;
+                    this._allowToggle = true;
+                    this.menu.toggle();
+                    this._allowToggle = false;
+                    this._startHoverWatch();
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+        } else if (this._hoverOpenId) {
+            GLib.source_remove(this._hoverOpenId);
+            this._hoverOpenId = 0;
+        }
+    }
+
+    // While the card is open the menu holds a grab, so hover signals are unreliable:
+    // watch the pointer position instead and close once it has left pill + card for a while.
+    _startHoverWatch() {
+        this._stopHoverWatch();
+        this._outsideSince = 0;
+        this._hoverWatchId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 80, () => {
+            if (this._destroyed || !this.menu.isOpen || !this._openedByHover) {
+                this._hoverWatchId = 0;
+                return GLib.SOURCE_REMOVE;
+            }
+            if (this._pointerInside()) {
+                this._outsideSince = 0;
+            } else {
+                const now = GLib.get_monotonic_time();
+                if (!this._outsideSince) {
+                    this._outsideSince = now;
+                } else if (now - this._outsideSince >= this._cfg.hoverCloseDelay * 1000) {
+                    this._hoverWatchId = 0;
+                    this.menu.close();
+                    return GLib.SOURCE_REMOVE;
+                }
+            }
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _stopHoverWatch() {
+        if (this._hoverWatchId) { GLib.source_remove(this._hoverWatchId); this._hoverWatchId = 0; }
+        this._outsideSince = 0;
+    }
+
+    _pointerInside() {
+        const [x, y] = global.get_pointer();
+        const rects = [];
+        for (const a of [this, this._controlsBox, this.menu.actor ?? this.menu._boxPointer]) {
+            if (!a || !a.visible) continue;
+            const [ax, ay] = a.get_transformed_position();
+            const [w, h] = a.get_transformed_size();
+            rects.push([ax, ay, ax + w, ay + h]);
+        }
+        if (!rects.length) return false;
+        const m = 6;   // forgiving margin; the bounding box also bridges the gap between pill and card
+        const x0 = Math.min(...rects.map(r => r[0])) - m;
+        const y0 = Math.min(...rects.map(r => r[1])) - m;
+        const x1 = Math.max(...rects.map(r => r[2])) + m;
+        const y1 = Math.max(...rects.map(r => r[3])) + m;
+        return x >= x0 && x <= x1 && y >= y0 && y <= y1;
     }
 
     // ============================================================ PANEL ICON
@@ -671,16 +840,57 @@ class MusicIndicator extends PanelMenu.Button {
         return n ? this._players.get(n) : null;
     }
 
-    _playerGIcon(name) {
+    _iconUsable(icon) {
         try {
+            if (icon instanceof Gio.FileIcon) return icon.get_file().query_exists(null);
+            if (icon instanceof Gio.ThemedIcon) {
+                this._iconTheme ??= new St.IconTheme();
+                return icon.get_names().some(n => this._iconTheme.has_icon(n));
+            }
+        } catch (e) { /* can't verify: assume it works */ }
+        return true;
+    }
+
+    _playerGIcon(name) {
+        const entry = this._meta.get(name)?.entry ?? '';
+        const id = busId(name);
+        const key = `${entry}|${id}`;
+        if (this._iconCache.has(key)) return this._iconCache.get(key);
+
+        const wants = [entry, id].filter(x => x && x.length >= 4).map(x => x.toLowerCase());
+        const candidates = [];
+        try {
+            // 1) exact desktop ids (deb: spotify.desktop, snap: spotify_spotify.desktop)
             const sys = Shell.AppSystem.get_default();
-            const entry = this._meta.get(name)?.entry;
-            const app = (entry && sys.lookup_app(`${entry}.desktop`)) ||
-                sys.lookup_app(`${busId(name)}.desktop`);
-            return app?.get_icon() ?? null;
+            for (const x of [entry, id, `${id}_${id}`]) {
+                const icon = x ? sys.lookup_app(`${x}.desktop`)?.get_icon() : null;
+                if (icon) candidates.push(icon);
+            }
+            // 2) fuzzy match over every installed app (flatpak: com.spotify.Client.desktop, ...)
+            for (const info of Gio.AppInfo.get_all()) {
+                const aid = (info.get_id() ?? '').replace(/\.desktop$/, '').toLowerCase();
+                if (wants.some(w => aid === w || aid.includes(w))) {
+                    const icon = info.get_icon();
+                    if (icon) candidates.push(icon);
+                }
+            }
         } catch (e) {
-            return null;
+            logError(e, 'Music Flyout: app icon lookup');
         }
+        // 3) icon-theme names
+        for (const n of [entry, id, `${id}-client`])
+            if (n) candidates.push(new Gio.ThemedIcon({name: n}));
+
+        let result = candidates.find(i => this._iconUsable(i)) ?? null;
+
+        // 4) bundled fallback for well-known players whose own icon can't be resolved
+        if (!result && wants.some(w => w.includes('spotify'))) {
+            const file = Gio.File.new_for_path(`${this._ext.path}/icons/spotify.svg`);
+            if (file.query_exists(null)) result = new Gio.FileIcon({file});
+        }
+
+        this._iconCache.set(key, result);
+        return result;
     }
 
     _applyPlayerIcon(widget, name) {
@@ -1027,6 +1237,8 @@ class MusicIndicator extends PanelMenu.Button {
         this._stopPolling();
         this._stopScroll();
         this._closeMixer();
+        this._stopHoverWatch();
+        if (this._hoverOpenId) { GLib.source_remove(this._hoverOpenId); this._hoverOpenId = 0; }
         this._artCancellable?.cancel();
         this._session?.abort();
         this._session = null;
