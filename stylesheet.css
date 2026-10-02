@@ -1,8 +1,66 @@
-.mf-panel-box { spacing: 2px; padding: 0 4px; }
+/* ---------- Panel pill ---------- */
+.mf-pill {
+    border-radius: 99px;
+    background-color: rgba(255,255,255,0.07);
+}
+.mf-pill:hover, .mf-pill:focus, .mf-pill:active {
+    background-color: rgba(255,255,255,0.16);
+}
+.mf-pill-box { spacing: 0; padding: 0 2px; }
+.mf-thumb {
+    width: 20px; height: 20px;
+    border-radius: 6px;
+    margin-right: 8px;
+    background-color: rgba(255,255,255,0.15);
+}
+.mf-label { font-weight: 600; max-width: 170px; }
+.mf-bars { height: 18px; spacing: 2px; margin-left: 8px; }
 .mf-bar { width: 3px; border-radius: 2px; background-color: #ffffff; }
-.mf-title { font-weight: bold; font-size: 110%; }
-.mf-artist { opacity: 0.7; }
-.mf-art { border-radius: 8px; }
-.mf-controls { spacing: 12px; padding-top: 8px; }
-.mf-btn { padding: 6px; border-radius: 99px; }
-.mf-btn:hover { background-color: rgba(255,255,255,0.15); }
+
+/* ---------- Acrylic flyout ---------- */
+.mf-menu {
+    -arrow-background-color: rgba(30,30,32,0.74);
+    -arrow-border-color: rgba(255,255,255,0.12);
+    -arrow-border-width: 1px;
+    -arrow-border-radius: 24px;
+    -arrow-box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+}
+.popup-menu-item.mf-item { padding: 0; background-color: transparent; }
+.mf-content { width: 288px; padding: 14px; }
+
+.mf-chips { spacing: 6px; padding-bottom: 10px; }
+.mf-chip {
+    padding: 3px 10px;
+    border-radius: 99px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.8);
+    background-color: rgba(255,255,255,0.08);
+    transition-duration: 120ms;
+}
+.mf-chip:hover { background-color: rgba(255,255,255,0.16); }
+.mf-chip-active { background-color: rgba(255,255,255,0.24); font-weight: bold; color: #fff; }
+
+.mf-art {
+    width: 264px; height: 264px;
+    border-radius: 18px;
+    background-color: rgba(255,255,255,0.08);
+}
+.mf-art-icon { color: rgba(255,255,255,0.5); }
+
+.mf-title { font-size: 17px; font-weight: bold; padding-top: 14px; color: #fff; }
+.mf-artist { font-size: 13px; color: rgba(255,255,255,0.65); padding-bottom: 12px; }
+
+.mf-track { height: 6px; border-radius: 99px; background-color: rgba(255,255,255,0.18); }
+.mf-fill { height: 6px; border-radius: 99px; background-color: #ffffff; }
+.mf-time { font-size: 11px; color: rgba(255,255,255,0.6); padding-top: 6px; }
+
+.mf-controls { spacing: 14px; padding-top: 10px; }
+.mf-btn {
+    padding: 8px;
+    border-radius: 99px;
+    color: #ffffff;
+    transition-duration: 120ms;
+}
+.mf-btn:hover { background-color: rgba(255,255,255,0.14); }
+.mf-play { background-color: #ffffff; color: #111111; padding: 12px; }
+.mf-play:hover { background-color: rgba(255,255,255,0.85); }
