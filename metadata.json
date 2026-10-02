@@ -1,7 +1,7 @@
 {
   "uuid": "music-flyout@local",
   "name": "Music Flyout",
-  "description": "Top-panel music controller with an animated visualizer and a flyout, driven by MPRIS.",
+  "description": "Fluent-style top-panel music controller with album art, progress bar, real audio visualizer (cava) and MPRIS player switching.",
   "shell-version": ["45", "46", "47", "48", "49", "50"],
-  "version": 1
+  "version": 2
 }
