@@ -1,0 +1,7 @@
+{
+  "uuid": "music-flyout@local",
+  "name": "Music Flyout",
+  "description": "Top-panel music controller with an animated visualizer and a flyout, driven by MPRIS.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "version": 1
+}
