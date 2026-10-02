@@ -242,7 +242,8 @@ class MusicIndicator extends PanelMenu.Button {
         add(c.panelLoop, 'media-playlist-repeat-symbolic', () => this._cycleLoop(), this._loopBtns);
         if (inner.get_n_children() === 0) return null;
 
-        const box = new PanelMenu.ButtonBox();
+        // addToStatusArea() only accepts PanelMenu.Button; `true` = no popup menu for this one
+        const box = new PanelMenu.Button(0.5, 'Music Flyout Controls', true);
         box.add_style_class_name('mf-pill');
         box.add_child(inner);
         return box;
