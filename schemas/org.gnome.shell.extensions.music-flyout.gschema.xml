@@ -1,41 +1,54 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist>
   <schema id="org.gnome.shell.extensions.music-flyout" path="/org/gnome/shell/extensions/music-flyout/">
-    <key name="panel-position" type="s">
-      <default>'center'</default>
-      <summary>Panel position</summary>
-      <description>Where the pill sits in the top bar: left, center or right.</description>
-    </key>
-    <key name="show-thumbnail" type="b">
-      <default>true</default>
-      <summary>Show album thumbnail in the pill</summary>
-    </key>
-    <key name="show-label" type="b">
-      <default>true</default>
-      <summary>Show track label in the pill</summary>
-    </key>
-    <key name="label-max-width" type="i">
-      <range min="80" max="400"/>
-      <default>170</default>
-      <summary>Maximum label width in pixels</summary>
-    </key>
-    <key name="bar-count" type="i">
-      <range min="3" max="9"/>
-      <default>5</default>
-      <summary>Number of visualizer bars</summary>
-    </key>
-    <key name="use-cava" type="b">
-      <default>true</default>
-      <summary>Use cava for a real audio visualizer</summary>
-    </key>
-    <key name="cava-method" type="s">
-      <default>'pulse'</default>
-      <summary>cava input method</summary>
-      <description>'pulse' (also works on PipeWire) or 'pipewire'.</description>
-    </key>
-    <key name="enable-blur" type="b">
-      <default>true</default>
-      <summary>Blur behind the flyout</summary>
-    </key>
+
+    <!-- Panel: placement -->
+    <key name="panel-position" type="s"><default>'center'</default><summary>Position: left, center or right</summary></key>
+    <key name="controls-first" type="b"><default>false</default><summary>Show controls before track information</summary></key>
+    <key name="hide-when-idle" type="b"><default>true</default><summary>Hide when no media player is running</summary></key>
+
+    <!-- Panel: playback controls -->
+    <key name="panel-shuffle" type="b"><default>false</default><summary>Shuffle button in the panel</summary></key>
+    <key name="panel-previous" type="b"><default>true</default><summary>Previous track button in the panel</summary></key>
+    <key name="panel-skip-back" type="b"><default>false</default><summary>Skip backward button in the panel</summary></key>
+    <key name="panel-play-pause" type="b"><default>true</default><summary>Play/pause button in the panel</summary></key>
+    <key name="panel-skip-forward" type="b"><default>false</default><summary>Skip forward button in the panel</summary></key>
+    <key name="panel-next" type="b"><default>true</default><summary>Next track button in the panel</summary></key>
+    <key name="panel-loop" type="b"><default>false</default><summary>Loop button in the panel</summary></key>
+
+    <!-- Panel: track information -->
+    <key name="show-player-icon" type="b"><default>true</default><summary>Show the player icon</summary></key>
+    <key name="show-title" type="b"><default>true</default><summary>Show the track title</summary></key>
+    <key name="show-artist" type="b"><default>true</default><summary>Show the artist</summary></key>
+    <key name="text-width" type="i"><range min="40" max="600"/><default>140</default><summary>Reserved width of the track text (px)</summary></key>
+
+    <!-- Panel: scrolling text -->
+    <key name="scroll-text" type="b"><default>true</default><summary>Scroll text that does not fit</summary></key>
+    <key name="scroll-repeat" type="b"><default>false</default><summary>Scroll continuously</summary></key>
+    <key name="scroll-direction" type="s"><default>'left-to-right'</default><summary>Scroll direction</summary></key>
+    <key name="scroll-speed" type="i"><range min="5" max="300"/><default>30</default><summary>Scroll speed (px per second)</summary></key>
+
+    <!-- Panel: visualizer -->
+    <key name="show-visualizer" type="b"><default>true</default><summary>Show the visualizer bars</summary></key>
+    <key name="bar-count" type="i"><range min="3" max="9"/><default>5</default><summary>Number of visualizer bars</summary></key>
+    <key name="use-cava" type="b"><default>true</default><summary>Use cava for a real audio visualizer</summary></key>
+    <key name="cava-method" type="s"><default>'pulse'</default><summary>cava input method (pulse or pipewire)</summary></key>
+
+    <!-- Card: appearance -->
+    <key name="card-album-art" type="b"><default>true</default><summary>Show album art in the card</summary></key>
+    <key name="album-art-size" type="s"><default>'large'</default><summary>Album art size: small, medium or large</summary></key>
+    <key name="card-width" type="i"><range min="280" max="640"/><default>360</default><summary>Card width (px)</summary></key>
+    <key name="enable-blur" type="b"><default>true</default><summary>Blur behind the card</summary></key>
+
+    <!-- Card: multiple players -->
+    <key name="player-switcher" type="b"><default>true</default><summary>Show the player switcher</summary></key>
+    <key name="single-player" type="b"><default>true</default><summary>Pause other players when one starts playing</summary></key>
+
+    <!-- Card: playback -->
+    <key name="seek-bar" type="b"><default>true</default><summary>Show the seek bar</summary></key>
+    <key name="card-skip-buttons" type="b"><default>true</default><summary>Show skip buttons in the card</summary></key>
+    <key name="skip-amount" type="i"><range min="1" max="120"/><default>10</default><summary>Skip amount (seconds)</summary></key>
+    <key name="card-shuffle" type="b"><default>true</default><summary>Show the shuffle button in the card</summary></key>
+    <key name="card-loop" type="b"><default>true</default><summary>Show the loop button in the card</summary></key>
   </schema>
 </schemalist>
