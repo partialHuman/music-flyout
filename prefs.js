@@ -184,13 +184,6 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         ];
         scrollRows.forEach(r => scrollEnable.bind_property('active', r, 'sensitive',
             GObject.BindingFlags.SYNC_CREATE));
-        const updateSecondary = () => {
-            secondEnable.sensitive = scrollEnable.active;
-            secondRows.forEach(r => { r.sensitive = scrollEnable.active && secondEnable.active; });
-        };
-        scrollEnable.connect('notify::active', updateSecondary);
-        secondEnable.connect('notify::active', updateSecondary);
-        updateSecondary();
 
         // ---- Secondary scroll action (modifier + scroll) ------------------
         const SCROLL_ACTIONS = ['change-track', 'change-volume', 'switch-player', 'seek'];
@@ -205,6 +198,14 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
                 ['Ctrl', 'Alt', 'Shift', 'Super (Win)', 'Ctrl + Shift', 'Ctrl + Alt', 'Alt + Shift', 'Super + Ctrl'],
                 'Hold this key while scrolling. The Fn key is handled inside the keyboard itself, so the desktop cannot detect it.'),
         ];
+        const updateSecondary = () => {
+            secondEnable.sensitive = scrollEnable.active;
+            secondRows.forEach(r => { r.sensitive = scrollEnable.active && secondEnable.active; });
+        };
+        scrollEnable.connect('notify::active', updateSecondary);
+        secondEnable.connect('notify::active', updateSecondary);
+        updateSecondary();
+
         // ---- Panel page --------------------------------------------------
         const panelPage = page('Panel', 'go-home-symbolic', [
             group('Placement', 'Where the indicator appears in the top panel.', [
