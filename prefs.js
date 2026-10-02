@@ -5,6 +5,8 @@ import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+const CLICK_VALUES = ['play-pause', 'open-card', 'next', 'previous', 'none'];
+const CLICK_LABELS = ['Play / Pause', 'Open card', 'Next track', 'Previous track', 'Nothing'];
 const ART_DIR = GLib.build_filenamev([GLib.get_user_cache_dir(), 'music-flyout', 'art']);
 
 function cacheStats() {
@@ -182,7 +184,27 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         ];
         scrollRows.forEach(r => scrollEnable.bind_property('active', r, 'sensitive',
             GObject.BindingFlags.SYNC_CREATE));
+        const updateSecondary = () => {
+            secondEnable.sensitive = scrollEnable.active;
+            secondRows.forEach(r => { r.sensitive = scrollEnable.active && secondEnable.active; });
+        };
+        scrollEnable.connect('notify::active', updateSecondary);
+        secondEnable.connect('notify::active', updateSecondary);
+        updateSecondary();
 
+        // ---- Secondary scroll action (modifier + scroll) ------------------
+        const SCROLL_ACTIONS = ['change-track', 'change-volume', 'switch-player', 'seek'];
+        const SCROLL_LABELS = ['Change Track', 'Change Volume', 'Switch Player', 'Seek'];
+        const secondEnable = toggle('secondary-scroll', 'Enable secondary scroll action',
+            'Hold a modifier key while scrolling to run a different action.');
+        const secondRows = [
+            choice('secondary-scroll-action', 'Secondary scroll action', SCROLL_ACTIONS, SCROLL_LABELS,
+                'Used while the modifier key below is held.'),
+            choice('secondary-scroll-modifier', 'Modifier key',
+                ['ctrl', 'alt', 'shift', 'super', 'ctrl-shift', 'ctrl-alt', 'alt-shift', 'super-ctrl'],
+                ['Ctrl', 'Alt', 'Shift', 'Super (Win)', 'Ctrl + Shift', 'Ctrl + Alt', 'Alt + Shift', 'Super + Ctrl'],
+                'Hold this key while scrolling. The Fn key is handled inside the keyboard itself, so the desktop cannot detect it.'),
+        ];
         // ---- Panel page --------------------------------------------------
         const panelPage = page('Panel', 'go-home-symbolic', [
             group('Placement', 'Where the indicator appears in the top panel.', [
@@ -228,7 +250,19 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
                 spin('scroll-speed', 'Speed', 5, 300, 5, 'Pixels per second.'),
             ]),
             group('Scroll wheel controls', 'Control playback by scrolling over the panel indicator.',
-                [scrollEnable, ...scrollRows]),
+                [scrollEnable, ...scrollRows, secondEnable, ...secondRows]),
+            group('Mouse buttons', 'What clicking the panel indicator does.', [
+                choice('click-left', 'Left click', CLICK_VALUES, CLICK_LABELS),
+                choice('click-middle', 'Middle click', CLICK_VALUES, CLICK_LABELS),
+                choice('click-right', 'Right click', CLICK_VALUES, CLICK_LABELS),
+            ]),
+            group('Hover', 'Show the card when the pointer rests on the panel indicator.', [
+                toggle('hover-open', 'Show card on hover',
+                    'The card closes again when the pointer leaves it. Right-clicking while it is shown keeps it open.'),
+                spin('hover-open-delay', 'Open delay', 0, 3000, 50, 'Milliseconds the pointer must rest on the indicator.'),
+                spin('hover-close-delay', 'Close delay', 100, 3000, 50,
+                    'Milliseconds before the card closes after the pointer leaves.'),
+            ]),
             group('Visualizer', 'The animated bars in the panel indicator.', [
                 toggle('show-visualizer', 'Show visualizer'),
                 spin('bar-count', 'Bars', 3, 9, 1),
