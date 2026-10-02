@@ -37,6 +37,17 @@
     <key name="volume-scroll-target" type="s"><default>'system'</default><summary>Volume target: system or player</summary></key>
     <key name="invert-scroll-animation" type="b"><default>false</default><summary>Invert the jump animation direction</summary></key>
     <key name="invert-scroll-direction" type="b"><default>false</default><summary>Swap up/down for track and volume actions</summary></key>
+    <key name="secondary-scroll" type="b"><default>false</default><summary>Enable the secondary (modifier + scroll) action</summary></key>
+    <key name="secondary-scroll-action" type="s"><default>'change-track'</default><summary>Secondary scroll action</summary></key>
+    <key name="secondary-scroll-modifier" type="s"><default>'ctrl'</default><summary>Modifier key(s) for the secondary scroll action</summary></key>
+
+    <!-- Panel: mouse buttons and hover -->
+    <key name="click-left" type="s"><default>'play-pause'</default><summary>Left click action</summary></key>
+    <key name="click-middle" type="s"><default>'none'</default><summary>Middle click action</summary></key>
+    <key name="click-right" type="s"><default>'open-card'</default><summary>Right click action</summary></key>
+    <key name="hover-open" type="b"><default>false</default><summary>Show the card when hovering the indicator</summary></key>
+    <key name="hover-open-delay" type="i"><range min="0" max="3000"/><default>300</default><summary>Hover open delay (ms)</summary></key>
+    <key name="hover-close-delay" type="i"><range min="100" max="3000"/><default>400</default><summary>Hover close delay (ms)</summary></key>
 
     <!-- Panel: visualizer -->
     <key name="show-visualizer" type="b"><default>true</default><summary>Show the visualizer bars</summary></key>
