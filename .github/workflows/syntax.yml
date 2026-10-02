@@ -1,0 +1,15 @@
+name: JavaScript syntax
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check extension.js
+        run: node --check extension.js
+      - name: Check prefs.js
+        run: node --check prefs.js
