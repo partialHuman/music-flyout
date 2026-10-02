@@ -2,7 +2,14 @@
   "uuid": "music-flyout@local",
   "name": "Music Flyout",
   "description": "Fluent-style top-panel music controller with album art, progress bar, real audio visualizer (cava), shuffle/repeat and MPRIS player switching.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
   "settings-schema": "org.gnome.shell.extensions.music-flyout",
-  "version": 3
+  "version": 4
 }
