@@ -17,7 +17,10 @@
     <key name="panel-loop" type="b"><default>false</default><summary>Loop button in the panel</summary></key>
 
     <!-- Panel: track information -->
-    <key name="show-player-icon" type="b"><default>true</default><summary>Show the player icon</summary></key>
+    <key name="icon-source" type="s"><default>'app-icon'</default><summary>Icon source: app-icon, album-art, playing-status, custom-image or none</summary></key>
+    <key name="icon-size" type="i"><range min="8" max="64"/><default>16</default><summary>Icon size (px)</summary></key>
+    <key name="icon-spacing" type="i"><range min="0" max="32"/><default>6</default><summary>Space between icon and text (px)</summary></key>
+    <key name="custom-icon-path" type="s"><default>''</default><summary>Custom icon image file</summary></key>
     <key name="show-title" type="b"><default>true</default><summary>Show the track title</summary></key>
     <key name="show-artist" type="b"><default>true</default><summary>Show the artist</summary></key>
     <key name="text-width" type="i"><range min="40" max="600"/><default>140</default><summary>Reserved width of the track text (px)</summary></key>
@@ -27,6 +30,13 @@
     <key name="scroll-repeat" type="b"><default>false</default><summary>Scroll continuously</summary></key>
     <key name="scroll-direction" type="s"><default>'left-to-right'</default><summary>Scroll direction</summary></key>
     <key name="scroll-speed" type="i"><range min="5" max="300"/><default>30</default><summary>Scroll speed (px per second)</summary></key>
+
+    <!-- Panel: scroll wheel controls -->
+    <key name="scroll-controls" type="b"><default>true</default><summary>Enable scroll controls on the pill</summary></key>
+    <key name="scroll-action" type="s"><default>'change-volume'</default><summary>Scroll action: change-track, change-volume, switch-player or seek</summary></key>
+    <key name="volume-scroll-target" type="s"><default>'system'</default><summary>Volume target: system or player</summary></key>
+    <key name="invert-scroll-animation" type="b"><default>false</default><summary>Invert the jump animation direction</summary></key>
+    <key name="invert-scroll-direction" type="b"><default>false</default><summary>Swap up/down for track and volume actions</summary></key>
 
     <!-- Panel: visualizer -->
     <key name="show-visualizer" type="b"><default>true</default><summary>Show the visualizer bars</summary></key>
