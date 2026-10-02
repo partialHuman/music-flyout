@@ -5,6 +5,7 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
 import Soup from 'gi://Soup?version=3.0';
+import Gvc from 'gi://Gvc';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -16,6 +17,8 @@ const CARD_PAD = 14;
 const SCROLL_GAP = 40;
 const SCROLL_PAUSE_MS = 1500;
 const STARTUP_GRACE_US = 1500000;
+const VOLUME_STEP = 0.05;
+const ICON_SOURCES = ['app-icon', 'album-art', 'playing-status', 'custom-image', 'none'];
 
 const MPRIS_PREFIX = 'org.mpris.MediaPlayer2.';
 const MPRIS_PATH = '/org/mpris/MediaPlayer2';
@@ -40,7 +43,10 @@ function readConfig(s) {
         panelSkipForward: b('panel-skip-forward'),
         panelNext: b('panel-next'),
         panelLoop: b('panel-loop'),
-        showPlayerIcon: b('show-player-icon'),
+        iconSource: ICON_SOURCES.includes(str('icon-source')) ? str('icon-source') : 'app-icon',
+        iconSize: i('icon-size'),
+        iconSpacing: i('icon-spacing'),
+        customIconPath: str('custom-icon-path'),
         showTitle: b('show-title'),
         showArtist: b('show-artist'),
         textWidth: i('text-width'),
@@ -48,6 +54,11 @@ function readConfig(s) {
         scrollRepeat: b('scroll-repeat'),
         scrollReverse: str('scroll-direction') === 'right-to-left',
         scrollSpeed: Math.max(1, i('scroll-speed')),
+        scrollControls: b('scroll-controls'),
+        scrollAction: str('scroll-action'),
+        volumeTarget: str('volume-scroll-target'),
+        invertScrollAnim: b('invert-scroll-animation'),
+        invertScroll: b('invert-scroll-direction'),
         showVisualizer: b('show-visualizer'),
         barCount: i('bar-count'),
         useCava: b('use-cava'),
@@ -106,6 +117,7 @@ const PlayerProxy = Gio.DBusProxy.makeProxyWrapper(`
     <property name="CanSeek" type="b" access="read"/>
     <property name="Shuffle" type="b" access="readwrite"/>
     <property name="LoopStatus" type="s" access="readwrite"/>
+    <property name="Volume" type="d" access="readwrite"/>
   </interface>
 </node>`);
 
@@ -156,6 +168,14 @@ class MusicIndicator extends PanelMenu.Button {
         this._buildCard();
         this._applyAcrylic();
 
+        this._scrollAcc = 0;
+        this._lastScroll = 0;
+        this.connect('scroll-event', (_a, event) => this._onScroll(event));
+        this._controlsBox?.connect('scroll-event', (_a, event) => this._onScroll(event));
+        if (this._cfg.scrollControls && this._cfg.scrollAction === 'change-volume' &&
+            this._cfg.volumeTarget === 'system')
+            this._openMixer();
+
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open) this._startPolling();
             else this._stopPolling();
@@ -189,14 +209,23 @@ class MusicIndicator extends PanelMenu.Button {
         // St.Buttons nested in a PanelMenu.Button lose their clicks to the parent's click handling.
         this._controlsBox = this._buildPanelControls();
 
-        if (c.showPlayerIcon) {
-            this._pIcon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: 16, y_align: Clutter.ActorAlign.CENTER});
-            box.add_child(this._pIcon);
+        if (c.iconSource !== 'none') {
+            const size = c.iconSize;
+            this._iconWrap = new St.Widget({
+                width: size, height: size, y_align: Clutter.ActorAlign.CENTER,
+                style: `margin-right: ${c.iconSpacing}px;`,
+            });
+            this._pIcon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: size});
+            this._pArt = new St.Widget({width: size, height: size, visible: false});
+            this._iconWrap.add_child(this._pIcon);
+            this._iconWrap.add_child(this._pArt);
+            box.add_child(this._iconWrap);
         }
 
         if (c.showTitle || c.showArtist) {
             this._textClip = new St.Widget({
                 clip_to_allocation: true, width: c.textWidth, y_align: Clutter.ActorAlign.CENTER,
+                style: c.showVisualizer ? 'margin-right: 6px;' : '',
             });
             this._scroller = new St.Widget();
             this._label1 = new St.Label({style_class: 'mf-label'});
@@ -414,6 +443,163 @@ class MusicIndicator extends PanelMenu.Button {
             if (n !== except && p.PlaybackStatus === 'Playing') p.PauseRemote();
     }
 
+    // ======================================================== SCROLL CONTROLS
+    _onScroll(event) {
+        if (!this._cfg.scrollControls) return Clutter.EVENT_PROPAGATE;
+
+        let dir = 0;                                   // +1 = scrolled up, -1 = down
+        const d = event.get_scroll_direction();
+        if (d === Clutter.ScrollDirection.UP) {
+            dir = 1;
+        } else if (d === Clutter.ScrollDirection.DOWN) {
+            dir = -1;
+        } else if (d === Clutter.ScrollDirection.SMOOTH) {
+            const [, dy] = event.get_scroll_delta();
+            if (event.get_scroll_source() === Clutter.ScrollSource.WHEEL) {
+                dir = dy < 0 ? 1 : (dy > 0 ? -1 : 0);
+            } else {                                   // touchpad: accumulate small deltas
+                this._scrollAcc += dy;
+                if (Math.abs(this._scrollAcc) >= 15) {
+                    dir = this._scrollAcc < 0 ? 1 : -1;
+                    this._scrollAcc = 0;
+                }
+            }
+        } else {
+            return Clutter.EVENT_PROPAGATE;
+        }
+        if (dir === 0) return Clutter.EVENT_STOP;
+
+        const now = GLib.get_monotonic_time();
+        if (now - this._lastScroll < 80000) return Clutter.EVENT_STOP;
+        this._lastScroll = now;
+
+        this._jump(dir);
+        this._doScroll(this._cfg.invertScroll ? -dir : dir);
+        return Clutter.EVENT_STOP;
+    }
+
+    _doScroll(dir) {
+        switch (this._cfg.scrollAction) {
+        case 'change-track':
+            if (dir > 0) this._active()?.NextRemote();
+            else this._active()?.PreviousRemote();
+            break;
+        case 'change-volume':
+            if (this._cfg.volumeTarget === 'player') this._scrollPlayerVolume(dir);
+            else this._scrollSystemVolume(dir);
+            break;
+        case 'switch-player':
+            this._switchPlayer(dir);
+            break;
+        case 'seek':
+            this._skip(dir > 0 ? 1 : -1);
+            break;
+        }
+    }
+
+    _switchPlayer(dir) {
+        const names = [...this._players.keys()];
+        if (names.length < 2) return;
+        const i = names.indexOf(this._activeName());
+        this._selected = names[(i + (dir > 0 ? 1 : -1) + names.length) % names.length];
+        this._update();
+    }
+
+    _scrollPlayerVolume(dir) {
+        const p = this._active();
+        if (!p || p.Volume === null || p.Volume === undefined) return;
+        try {
+            p.Volume = Math.min(1, Math.max(0, p.Volume + dir * VOLUME_STEP));
+        } catch (e) { logError(e); }
+    }
+
+    _openMixer() {
+        if (this._mixer) return;
+        try {
+            this._mixer = new Gvc.MixerControl({name: 'Music Flyout'});
+            this._mixer.open();
+        } catch (e) {
+            logError(e, 'Music Flyout: volume control unavailable');
+            this._mixer = null;
+        }
+    }
+
+    _closeMixer() {
+        if (!this._mixer) return;
+        try { this._mixer.close(); } catch (e) { /* ignore */ }
+        this._mixer = null;
+    }
+
+    _scrollSystemVolume(dir) {
+        this._openMixer();
+        const mixer = this._mixer;
+        if (!mixer || mixer.get_state() !== Gvc.MixerControlState.READY) return;
+        const sink = mixer.get_default_sink();
+        if (!sink) return;
+        const max = mixer.get_vol_max_norm();
+        const next = Math.min(max, Math.max(0, sink.volume + dir * VOLUME_STEP * max));
+        if (dir > 0 && sink.is_muted) sink.change_is_muted(false);
+        sink.volume = next;
+        sink.push_volume();
+    }
+
+    // Small "jump" of the pill in the scroll direction
+    _jump(dir) {
+        const sign = (dir > 0 ? -1 : 1) * (this._cfg.invertScrollAnim ? -1 : 1);
+        for (const actor of [this, this._controlsBox]) {
+            if (!actor) continue;
+            actor.ease({
+                translation_y: sign * 3, duration: 70, mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
+                    if (this._destroyed) return;
+                    actor.ease({translation_y: 0, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+                },
+            });
+        }
+    }
+
+    // ============================================================ PANEL ICON
+    _updatePanelIcon() {
+        if (!this._pIcon) return;
+        const c = this._cfg;
+        const name = this._activeName();
+        let showArt = false;
+
+        switch (c.iconSource) {
+        case 'album-art':
+            if (this._artPath) showArt = true;
+            else this._applyPlayerIcon(this._pIcon, name);
+            break;
+        case 'playing-status': {
+            const st = this._active()?.PlaybackStatus;
+            this._pIcon.gicon = null;
+            this._pIcon.icon_name = st === 'Playing' ? 'media-playback-start-symbolic'
+                : st === 'Paused' ? 'media-playback-pause-symbolic' : 'media-playback-stop-symbolic';
+            break;
+        }
+        case 'custom-image':
+            if (c.customIconPath && GLib.file_test(c.customIconPath, GLib.FileTest.EXISTS)) {
+                this._pIcon.gicon = new Gio.FileIcon({file: Gio.File.new_for_path(c.customIconPath)});
+            } else {
+                this._pIcon.gicon = null;
+                this._pIcon.icon_name = FALLBACK_ICON;
+            }
+            break;
+        default:
+            this._applyPlayerIcon(this._pIcon, name);
+        }
+
+        this._pIcon.visible = !showArt;
+        if (this._pArt) {
+            this._pArt.visible = showArt;
+            if (showArt) {
+                const uri = GLib.filename_to_uri(this._artPath, null);
+                this._pArt.style = `border-radius: ${Math.round(c.iconSize / 4)}px; ` +
+                    `background-image: url("${uri}"); background-size: cover;`;
+            }
+        }
+    }
+
     // ============================================================= PLAYERS
     _scanPlayers() {
         Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
@@ -539,7 +725,7 @@ class MusicIndicator extends PanelMenu.Button {
         this.visible = !!p || !c.hideWhenIdle;
         if (this._controlsBox) this._controlsBox.visible = this.visible;
         this._rebuildSwitcher();
-        if (this._pIcon) this._applyPlayerIcon(this._pIcon, name);
+        this._updatePanelIcon();
         this._applyPlayerIcon(this._artIcon, name);
 
         if (!p) {
@@ -572,7 +758,7 @@ class MusicIndicator extends PanelMenu.Button {
         this._setText(parts.join(' – '));
 
         this._syncControls(p);
-        if (c.cardAlbumArt) this._setArt(md['mpris:artUrl'] ?? null);
+        if (c.cardAlbumArt || c.iconSource === 'album-art') this._setArt(md['mpris:artUrl'] ?? null);
         this._syncVisualizer(p.PlaybackStatus === 'Playing');
         if (this.menu.isOpen) this._pollPosition();
         else this._renderProgress();
@@ -705,6 +891,8 @@ class MusicIndicator extends PanelMenu.Button {
     }
 
     _applyArt(path) {
+        this._artPath = path ?? null;
+        this._updatePanelIcon();
         if (path) {
             const uri = GLib.filename_to_uri(path, null);
             this._art.style = `background-image: url("${uri}"); background-size: cover;`;
@@ -838,6 +1026,7 @@ class MusicIndicator extends PanelMenu.Button {
         this._stopCava();
         this._stopPolling();
         this._stopScroll();
+        this._closeMixer();
         this._artCancellable?.cancel();
         this._session?.abort();
         this._session = null;
