@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.music-flyout" path="/org/gnome/shell/extensions/music-flyout/">
+    <key name="panel-position" type="s">
+      <default>'center'</default>
+      <summary>Panel position</summary>
+      <description>Where the pill sits in the top bar: left, center or right.</description>
+    </key>
+    <key name="show-thumbnail" type="b">
+      <default>true</default>
+      <summary>Show album thumbnail in the pill</summary>
+    </key>
+    <key name="show-label" type="b">
+      <default>true</default>
+      <summary>Show track label in the pill</summary>
+    </key>
+    <key name="label-max-width" type="i">
+      <range min="80" max="400"/>
+      <default>170</default>
+      <summary>Maximum label width in pixels</summary>
+    </key>
+    <key name="bar-count" type="i">
+      <range min="3" max="9"/>
+      <default>5</default>
+      <summary>Number of visualizer bars</summary>
+    </key>
+    <key name="use-cava" type="b">
+      <default>true</default>
+      <summary>Use cava for a real audio visualizer</summary>
+    </key>
+    <key name="cava-method" type="s">
+      <default>'pulse'</default>
+      <summary>cava input method</summary>
+      <description>'pulse' (also works on PipeWire) or 'pipewire'.</description>
+    </key>
+    <key name="enable-blur" type="b">
+      <default>true</default>
+      <summary>Blur behind the flyout</summary>
+    </key>
+  </schema>
+</schemalist>
