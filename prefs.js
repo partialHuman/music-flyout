@@ -277,8 +277,11 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         // ---- Card page ---------------------------------------------------
         const cardPage = page('Card', 'audio-x-generic-symbolic', [
             group('Appearance', 'The card is shown when you click the panel indicator.', [
+                choice('card-style', 'Card style', ['default', 'compact'], ['Default', 'Compact'],
+                    'Compact puts a small thumbnail beside the track details, like a media notification.'),
                 toggle('card-album-art', 'Album art', 'Falls back to the player icon when the track has no artwork.'),
-                choice('album-art-size', 'Album art size', ['small', 'medium', 'large'], ['Small', 'Medium', 'Large']),
+                choice('album-art-size', 'Album art size', ['small', 'medium', 'large'], ['Small', 'Medium', 'Large'],
+                    'Compact style uses 56, 72 or 88 px thumbnails.'),
                 spin('card-width', 'Card width', 280, 640, 10, 'Measured in pixels.'),
                 toggle('enable-blur', 'Blur background', 'Acrylic blur behind the card. Turn off if it looks odd at the corners.'),
             ]),
