@@ -1,0 +1,15 @@
+# Generated GSettings schema
+schemas/gschemas.compiled
+
+# Archives
+*.zip
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
