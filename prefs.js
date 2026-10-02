@@ -1,4 +1,5 @@
 import Adw from 'gi://Adw';
+import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
@@ -122,6 +123,66 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
             return p;
         };
 
+        // ---- Custom icon image picker ------------------------------------
+        const iconPreview = new Gtk.Image({pixel_size: 40, icon_name: 'image-x-generic-symbolic'});
+        const imageRow = new Adw.ActionRow({title: 'Image file'});
+        imageRow.add_prefix(iconPreview);
+        const clearBtn = new Gtk.Button({
+            icon_name: 'edit-clear-symbolic', valign: Gtk.Align.CENTER, tooltip_text: 'Remove image',
+        });
+        const pickBtn = new Gtk.Button({
+            icon_name: 'document-open-symbolic', valign: Gtk.Align.CENTER, tooltip_text: 'Choose image…',
+        });
+        clearBtn.add_css_class('flat');
+        pickBtn.add_css_class('flat');
+        imageRow.add_suffix(clearBtn);
+        imageRow.add_suffix(pickBtn);
+
+        const syncImage = () => {
+            const path = settings.get_string('custom-icon-path');
+            imageRow.subtitle = path ? GLib.path_get_basename(path) : 'No file selected';
+            clearBtn.visible = !!path;
+            if (path && GLib.file_test(path, GLib.FileTest.EXISTS)) iconPreview.set_from_file(path);
+            else iconPreview.set_from_icon_name('image-x-generic-symbolic');
+        };
+        syncImage();
+        handlerIds.push(settings.connect('changed::custom-icon-path', syncImage));
+        clearBtn.connect('clicked', () => settings.set_string('custom-icon-path', ''));
+        pickBtn.connect('clicked', () => {
+            const dialog = new Gtk.FileDialog({title: 'Choose an image'});
+            const filter = new Gtk.FileFilter();
+            filter.name = 'Images';
+            filter.add_mime_type('image/*');
+            const filters = new Gio.ListStore({item_type: Gtk.FileFilter});
+            filters.append(filter);
+            dialog.filters = filters;
+            dialog.open(window, null, (d, res) => {
+                try {
+                    const file = d.open_finish(res);
+                    if (file) settings.set_string('custom-icon-path', file.get_path());
+                } catch (e) { /* cancelled */ }
+            });
+        });
+
+        // ---- Scroll controls rows (greyed out while disabled) -------------
+        const scrollEnable = toggle('scroll-controls', 'Enable scroll controls',
+            'Change tracks, volume or media player using the scroll wheel or touchpad.');
+        const scrollRows = [
+            choice('scroll-action', 'Scroll action',
+                ['change-track', 'change-volume', 'switch-player', 'seek'],
+                ['Change Track', 'Change Volume', 'Switch Player', 'Seek'],
+                'Choose what scrolling on the pill should do. Seek uses the skip amount from the Card page.'),
+            choice('volume-scroll-target', 'Volume scroll target', ['system', 'player'],
+                ['System Master', 'Active Player'],
+                'Choose which sound source to control when scrolling volume.'),
+            toggle('invert-scroll-animation', 'Invert scroll animation',
+                'Direction of the jump effect (Natural vs Traditional).'),
+            toggle('invert-scroll-direction', 'Invert scroll direction',
+                'Swap up/down for track and volume actions.'),
+        ];
+        scrollRows.forEach(r => scrollEnable.bind_property('active', r, 'sensitive',
+            GObject.BindingFlags.SYNC_CREATE));
+
         // ---- Panel page --------------------------------------------------
         const panelPage = page('Panel', 'go-home-symbolic', [
             group('Placement', 'Where the indicator appears in the top panel.', [
@@ -141,8 +202,16 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
                 toggle('panel-loop', 'Loop',
                     'Cycles between off, the whole queue, and one track. Requires a player that supports looping.'),
             ]),
+            group('Icon', 'How Music Flyout represents the currently playing media in the panel.', [
+                choice('icon-source', 'Icon source',
+                    ['app-icon', 'album-art', 'playing-status', 'custom-image', 'none'],
+                    ['App icon', 'Album art', 'Playing status', 'Custom image', 'None'],
+                    'Album art, app icon or any icon.'),
+                spin('icon-size', 'Icon size', 8, 64, 1, 'Size in pixels.'),
+                spin('icon-spacing', 'Icon spacing', 0, 32, 1, 'Space between the icon and text in pixels.'),
+            ]),
+            group('Custom image', 'Pick an image to use when the icon source is set to Custom image.', [imageRow]),
             group('Track information', 'What the indicator shows about the current track.', [
-                toggle('show-player-icon', 'Player icon'),
                 toggle('show-title', 'Track title'),
                 toggle('show-artist', 'Artist'),
                 spin('text-width', 'Text width', 40, 600, 10,
@@ -158,6 +227,8 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
                     'The way the text is read as it scrolls past.'),
                 spin('scroll-speed', 'Speed', 5, 300, 5, 'Pixels per second.'),
             ]),
+            group('Scroll wheel controls', 'Control playback by scrolling over the panel indicator.',
+                [scrollEnable, ...scrollRows]),
             group('Visualizer', 'The animated bars in the panel indicator.', [
                 toggle('show-visualizer', 'Show visualizer'),
                 spin('bar-count', 'Bars', 3, 9, 1),
