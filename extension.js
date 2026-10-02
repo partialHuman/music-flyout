@@ -12,14 +12,59 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const BAR_MIN = 3;
 const BAR_MAX = 18;
-const ART_SIZE = 264;
-const PROGRESS_W = 264;
+const CARD_PAD = 14;
+const SCROLL_GAP = 40;
+const SCROLL_PAUSE_MS = 1500;
+const STARTUP_GRACE_US = 1500000;
 
 const MPRIS_PREFIX = 'org.mpris.MediaPlayer2.';
 const MPRIS_PATH = '/org/mpris/MediaPlayer2';
 const PLAYER_IFACE = 'org.mpris.MediaPlayer2.Player';
+const ROOT_IFACE = 'org.mpris.MediaPlayer2';
 const CACHE_DIR = GLib.build_filenamev([GLib.get_user_cache_dir(), 'music-flyout']);
+const ART_DIR = GLib.build_filenamev([CACHE_DIR, 'art']);
 const LOOP_ORDER = ['None', 'Playlist', 'Track'];
+const FALLBACK_ICON = 'audio-x-generic-symbolic';
+
+function readConfig(s) {
+    const b = k => s.get_boolean(k);
+    const i = k => s.get_int(k);
+    const str = k => s.get_string(k);
+    return {
+        controlsFirst: b('controls-first'),
+        hideWhenIdle: b('hide-when-idle'),
+        panelShuffle: b('panel-shuffle'),
+        panelPrevious: b('panel-previous'),
+        panelSkipBack: b('panel-skip-back'),
+        panelPlayPause: b('panel-play-pause'),
+        panelSkipForward: b('panel-skip-forward'),
+        panelNext: b('panel-next'),
+        panelLoop: b('panel-loop'),
+        showPlayerIcon: b('show-player-icon'),
+        showTitle: b('show-title'),
+        showArtist: b('show-artist'),
+        textWidth: i('text-width'),
+        scrollText: b('scroll-text'),
+        scrollRepeat: b('scroll-repeat'),
+        scrollReverse: str('scroll-direction') === 'right-to-left',
+        scrollSpeed: Math.max(1, i('scroll-speed')),
+        showVisualizer: b('show-visualizer'),
+        barCount: i('bar-count'),
+        useCava: b('use-cava'),
+        cavaMethod: str('cava-method') === 'pipewire' ? 'pipewire' : 'pulse',
+        cardAlbumArt: b('card-album-art'),
+        albumArtSize: str('album-art-size'),
+        cardWidth: i('card-width'),
+        blur: b('enable-blur'),
+        playerSwitcher: b('player-switcher'),
+        singlePlayer: b('single-player'),
+        seekBar: b('seek-bar'),
+        cardSkip: b('card-skip-buttons'),
+        skipAmount: i('skip-amount'),
+        cardShuffle: b('card-shuffle'),
+        cardLoop: b('card-loop'),
+    };
+}
 
 function cavaConfig(bars, method) {
     return `[general]
@@ -48,14 +93,17 @@ const PlayerProxy = Gio.DBusProxy.makeProxyWrapper(`
 <node>
   <interface name="org.mpris.MediaPlayer2.Player">
     <method name="PlayPause"/>
+    <method name="Pause"/>
     <method name="Next"/>
     <method name="Previous"/>
+    <method name="Seek"><arg type="x" direction="in" name="Offset"/></method>
     <method name="SetPosition">
       <arg type="o" direction="in" name="TrackId"/>
       <arg type="x" direction="in" name="Position"/>
     </method>
     <property name="PlaybackStatus" type="s" access="read"/>
     <property name="Metadata" type="a{sv}" access="read"/>
+    <property name="CanSeek" type="b" access="read"/>
     <property name="Shuffle" type="b" access="readwrite"/>
     <property name="LoopStatus" type="s" access="readwrite"/>
   </interface>
@@ -66,40 +114,42 @@ function fmtTime(us) {
     return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 }
 
-function playerLabel(busName) {
-    const n = busName.slice(MPRIS_PREFIX.length).replace(/\.instance[_\d]+$/, '');
-    return n.charAt(0).toUpperCase() + n.slice(1);
+function busId(busName) {
+    return busName.slice(MPRIS_PREFIX.length).replace(/\.instance[_\d]+$/, '');
 }
 
 const MusicIndicator = GObject.registerClass(
 class MusicIndicator extends PanelMenu.Button {
-    _init(settings) {
+    _init(settings, extension) {
         super._init(0.5, 'Music Flyout', false);
         this.add_style_class_name('mf-pill');
 
-        this._barCount = settings.get_int('bar-count');
-        this._showThumb = settings.get_boolean('show-thumbnail');
-        this._showLabel = settings.get_boolean('show-label');
-        this._labelWidth = settings.get_int('label-max-width');
-        this._useCava = settings.get_boolean('use-cava');
-        this._cavaMethod = settings.get_string('cava-method');
-        this._blur = settings.get_boolean('enable-blur');
+        this._ext = extension;
+        this._cfg = readConfig(settings);
+        this._innerW = this._cfg.cardWidth - 2 * CARD_PAD;
 
         this._players = new Map();
+        this._meta = new Map();
         this._selected = null;
         this._destroyed = false;
+        this._startedAt = GLib.get_monotonic_time();
         this._bars = [];
+        this._shuffleBtns = [];
+        this._loopBtns = [];
+        this._skipBtns = [];
+        this._playBtns = [];
         this._artUrl = null;
         this._trackId = null;
         this._length = 0;
         this._position = 0;
-        this._chipsKey = '';
+        this._text = null;
+        this._switchKey = '';
         this._cava = null;
         this._cavaFailed = false;
         this._session = new Soup.Session({timeout: 10});
 
         this._buildPanel();
-        this._buildFlyout();
+        this._buildCard();
         this._applyAcrylic();
 
         this.menu.connect('open-state-changed', (_m, open) => {
@@ -126,28 +176,68 @@ class MusicIndicator extends PanelMenu.Button {
         this._update();
     }
 
-    // ------------------------------------------------------------ UI: panel
+    // ================================================================ PANEL
     _buildPanel() {
+        const c = this._cfg;
         const box = new St.BoxLayout({style_class: 'mf-pill-box', y_align: Clutter.ActorAlign.CENTER});
 
-        this._thumb = new St.Widget({style_class: 'mf-thumb', y_align: Clutter.ActorAlign.CENTER, visible: false});
-        box.add_child(this._thumb);
+        const controls = this._buildPanelControls();
+        if (controls && c.controlsFirst) box.add_child(controls);
 
-        this._panelLabel = new St.Label({
-            style_class: 'mf-label', y_align: Clutter.ActorAlign.CENTER,
-            style: `max-width: ${this._labelWidth}px;`, visible: this._showLabel,
-        });
-        box.add_child(this._panelLabel);
-
-        const bars = new St.BoxLayout({style_class: 'mf-bars', y_align: Clutter.ActorAlign.CENTER});
-        if (!this._showLabel && !this._showThumb) bars.style = 'margin-left: 0;';
-        for (let i = 0; i < this._barCount; i++) {
-            const bar = new St.Widget({style_class: 'mf-bar', y_align: Clutter.ActorAlign.CENTER, height: BAR_MIN});
-            this._bars.push(bar);
-            bars.add_child(bar);
+        if (c.showPlayerIcon) {
+            this._pIcon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: 16, y_align: Clutter.ActorAlign.CENTER});
+            box.add_child(this._pIcon);
         }
-        box.add_child(bars);
+
+        if (c.showTitle || c.showArtist) {
+            this._textClip = new St.Widget({
+                clip_to_allocation: true, width: c.textWidth, y_align: Clutter.ActorAlign.CENTER,
+            });
+            this._scroller = new St.Widget();
+            this._label1 = new St.Label({style_class: 'mf-label'});
+            this._label2 = new St.Label({style_class: 'mf-label', visible: false});
+            this._scroller.add_child(this._label1);
+            this._scroller.add_child(this._label2);
+            this._textClip.add_child(this._scroller);
+            box.add_child(this._textClip);
+        }
+
+        if (c.showVisualizer) {
+            const bars = new St.BoxLayout({style_class: 'mf-bars', y_align: Clutter.ActorAlign.CENTER});
+            for (let i = 0; i < c.barCount; i++) {
+                const bar = new St.Widget({style_class: 'mf-bar', y_align: Clutter.ActorAlign.CENTER, height: BAR_MIN});
+                this._bars.push(bar);
+                bars.add_child(bar);
+            }
+            box.add_child(bars);
+        }
+
+        if (controls && !c.controlsFirst) box.add_child(controls);
+
+        if (box.get_n_children() === 0) {   // never leave an empty pill
+            this._pIcon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: 16});
+            box.add_child(this._pIcon);
+        }
         this.add_child(box);
+    }
+
+    _buildPanelControls() {
+        const c = this._cfg;
+        const box = new St.BoxLayout({style_class: 'mf-pcontrols', y_align: Clutter.ActorAlign.CENTER});
+        const add = (enabled, icon, fn, registry) => {
+            if (!enabled) return;
+            const btn = this._makeButton(icon, 14, 'mf-pbtn', fn);
+            registry?.push(btn);
+            box.add_child(btn);
+        };
+        add(c.panelShuffle, 'media-playlist-shuffle-symbolic', () => this._toggleShuffle(), this._shuffleBtns);
+        add(c.panelPrevious, 'media-skip-backward-symbolic', () => this._active()?.PreviousRemote());
+        add(c.panelSkipBack, 'media-seek-backward-symbolic', () => this._skip(-1), this._skipBtns);
+        add(c.panelPlayPause, 'media-playback-start-symbolic', () => this._active()?.PlayPauseRemote(), this._playBtns);
+        add(c.panelSkipForward, 'media-seek-forward-symbolic', () => this._skip(1), this._skipBtns);
+        add(c.panelNext, 'media-skip-forward-symbolic', () => this._active()?.NextRemote());
+        add(c.panelLoop, 'media-playlist-repeat-symbolic', () => this._cycleLoop(), this._loopBtns);
+        return box.get_n_children() > 0 ? box : null;
     }
 
     // Middle-click the pill = play/pause
@@ -160,66 +250,96 @@ class MusicIndicator extends PanelMenu.Button {
         return super.vfunc_event(event);
     }
 
-    // ----------------------------------------------------------- UI: flyout
-    _buildFlyout() {
-        const content = new St.BoxLayout({vertical: true, style_class: 'mf-content'});
+    // ================================================================= CARD
+    _buildCard() {
+        const c = this._cfg;
+        const W = this._innerW;
+        const content = new St.BoxLayout({vertical: true, style_class: 'mf-content', width: c.cardWidth});
 
-        this._chips = new St.BoxLayout({style_class: 'mf-chips', x_align: Clutter.ActorAlign.CENTER, visible: false});
-        content.add_child(this._chips);
-
+        // Album art
+        const sizes = {small: 120, medium: 200, large: W};
+        this._artSize = Math.min(sizes[c.albumArtSize] ?? W, W);
         this._artIcon = new St.Icon({
-            icon_name: 'audio-x-generic-symbolic', icon_size: 96, style_class: 'mf-art-icon',
-            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+            icon_name: FALLBACK_ICON, icon_size: Math.min(128, Math.round(this._artSize / 2)),
+            style_class: 'mf-art-icon', x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
         });
-        this._art = new St.Bin({style_class: 'mf-art', child: this._artIcon});
+        this._art = new St.Bin({
+            style_class: 'mf-art', width: this._artSize, height: this._artSize,
+            x_align: Clutter.ActorAlign.CENTER, child: this._artIcon, visible: c.cardAlbumArt,
+        });
         content.add_child(this._art);
 
-        this._title = new St.Label({style_class: 'mf-title'});
-        this._artist = new St.Label({style_class: 'mf-artist'});
+        this._title = new St.Label({style_class: 'mf-title', width: W});
+        this._artist = new St.Label({style_class: 'mf-artist', width: W});
         content.add_child(this._title);
         content.add_child(this._artist);
 
-        this._track = new St.Widget({style_class: 'mf-track', reactive: true, track_hover: true,
-            width: PROGRESS_W, height: 6});
+        // Seek bar
+        this._progressBox = new St.BoxLayout({vertical: true, visible: false});
+        this._track = new St.Widget({style_class: 'mf-track', reactive: true, track_hover: true, width: W, height: 6});
         this._fill = new St.Widget({style_class: 'mf-fill', width: 0, height: 6});
         this._track.add_child(this._fill);
         this._track.connect('button-press-event', (_a, event) => {
             this._seekFromEvent(event);
             return Clutter.EVENT_STOP;
         });
-        content.add_child(this._track);
-
-        const times = new St.BoxLayout({width: PROGRESS_W});
+        this._progressBox.add_child(this._track);
+        const times = new St.BoxLayout({width: W});
         this._elapsed = new St.Label({style_class: 'mf-time', text: '0:00', x_expand: true});
         this._remaining = new St.Label({style_class: 'mf-time', text: '-0:00'});
         times.add_child(this._elapsed);
         times.add_child(this._remaining);
-        content.add_child(times);
+        this._progressBox.add_child(times);
+        content.add_child(this._progressBox);
 
-        const controls = new St.BoxLayout({style_class: 'mf-controls', x_align: Clutter.ActorAlign.CENTER});
-        this._shuffleBtn = this._makeButton('media-playlist-shuffle-symbolic', 18, '', () => {
-            const p = this._active();
-            if (!p || p.Shuffle === null || p.Shuffle === undefined) return;
-            try { p.Shuffle = !p.Shuffle; } catch (e) { logError(e); }
-        });
-        this._repeatBtn = this._makeButton('media-playlist-repeat-symbolic', 18, '', () => {
-            const p = this._active();
-            if (!p || !p.LoopStatus) return;
-            const next = LOOP_ORDER[(LOOP_ORDER.indexOf(p.LoopStatus) + 1) % LOOP_ORDER.length];
-            try { p.LoopStatus = next; } catch (e) { logError(e); }
-        });
-        controls.add_child(this._shuffleBtn);
-        controls.add_child(this._makeButton('media-skip-backward-symbolic', 22, '', () => this._active()?.PreviousRemote()));
-        this._playBtn = this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._active()?.PlayPauseRemote());
-        controls.add_child(this._playBtn);
-        controls.add_child(this._makeButton('media-skip-forward-symbolic', 22, '', () => this._active()?.NextRemote()));
-        controls.add_child(this._repeatBtn);
+        // Controls: [shuffle]  [skip-back prev PLAY next skip-fwd]  [loop]
+        const controls = new St.BoxLayout({style_class: 'mf-controls', width: W});
+        const slot = (btn) => new St.Bin({width: 40, child: btn, x_align: Clutter.ActorAlign.CENTER});
+
+        const left = slot(c.cardShuffle ? this._reg(this._shuffleBtns,
+            this._makeButton('media-playlist-shuffle-symbolic', 18, '', () => this._toggleShuffle())) : null);
+        const right = slot(c.cardLoop ? this._reg(this._loopBtns,
+            this._makeButton('media-playlist-repeat-symbolic', 18, '', () => this._cycleLoop())) : null);
+
+        const mid = new St.BoxLayout({style_class: 'mf-mid', x_expand: true, x_align: Clutter.ActorAlign.CENTER});
+        if (c.cardSkip)
+            mid.add_child(this._reg(this._skipBtns, this._makeButton('media-seek-backward-symbolic', 18, '', () => this._skip(-1))));
+        mid.add_child(this._makeButton('media-skip-backward-symbolic', 22, '', () => this._active()?.PreviousRemote()));
+        mid.add_child(this._reg(this._playBtns,
+            this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._active()?.PlayPauseRemote())));
+        mid.add_child(this._makeButton('media-skip-forward-symbolic', 22, '', () => this._active()?.NextRemote()));
+        if (c.cardSkip)
+            mid.add_child(this._reg(this._skipBtns, this._makeButton('media-seek-forward-symbolic', 18, '', () => this._skip(1))));
+
+        controls.add_child(left);
+        controls.add_child(mid);
+        controls.add_child(right);
         content.add_child(controls);
+
+        // Bottom row: player switcher + settings button
+        const bottom = new St.BoxLayout({style_class: 'mf-bottom', width: W});
+        this._switcher = new St.BoxLayout({style_class: 'mf-switcher', x_expand: true});
+        bottom.add_child(this._switcher);
+        const gear = new St.Button({
+            style_class: 'mf-gear', reactive: true, track_hover: true, can_focus: true,
+            child: new St.Icon({icon_name: 'preferences-system-symbolic', icon_size: 16}),
+        });
+        gear.connect('clicked', () => {
+            this.menu.close();
+            this._ext.openPreferences();
+        });
+        bottom.add_child(gear);
+        content.add_child(bottom);
 
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
         item.add_style_class_name('mf-item');
         item.add_child(content);
         this.menu.addMenuItem(item);
+    }
+
+    _reg(list, btn) {
+        list.push(btn);
+        return btn;
     }
 
     _makeButton(iconName, size, extraClass, onClick) {
@@ -247,7 +367,7 @@ class MusicIndicator extends PanelMenu.Button {
     _applyAcrylic() {
         const actor = this.menu.actor ?? this.menu._boxPointer;
         actor.add_style_class_name('mf-menu');
-        if (!this._blur) return;
+        if (!this._cfg.blur) return;
         try {
             const blur = new Shell.BlurEffect({
                 brightness: 0.75, sigma: 30, mode: Shell.BlurMode.BACKGROUND,
@@ -258,7 +378,30 @@ class MusicIndicator extends PanelMenu.Button {
         }
     }
 
-    // --------------------------------------------------------- MPRIS players
+    // ============================================================ ACTIONS
+    _toggleShuffle() {
+        const p = this._active();
+        if (!p || p.Shuffle === null || p.Shuffle === undefined) return;
+        try { p.Shuffle = !p.Shuffle; } catch (e) { logError(e); }
+    }
+
+    _cycleLoop() {
+        const p = this._active();
+        if (!p || !p.LoopStatus) return;
+        const next = LOOP_ORDER[(LOOP_ORDER.indexOf(p.LoopStatus) + 1) % LOOP_ORDER.length];
+        try { p.LoopStatus = next; } catch (e) { logError(e); }
+    }
+
+    _skip(direction) {
+        this._active()?.SeekRemote(direction * this._cfg.skipAmount * 1000000);
+    }
+
+    _pauseOthers(except) {
+        for (const [n, p] of this._players)
+            if (n !== except && p.PlaybackStatus === 'Playing') p.PauseRemote();
+    }
+
+    // ============================================================= PLAYERS
     _scanPlayers() {
         Gio.DBus.session.call('org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus',
             'ListNames', null, GLib.VariantType.new('(as)'), Gio.DBusCallFlags.NONE, -1, null,
@@ -277,19 +420,42 @@ class MusicIndicator extends PanelMenu.Button {
             if (this._destroyed || this._players.has(name)) return;
             proxy.connect('g-properties-changed', (_p, changed) => {
                 const c = changed.deepUnpack();
-                if (c.PlaybackStatus && c.PlaybackStatus.unpack() === 'Playing')
+                if (c.PlaybackStatus && c.PlaybackStatus.unpack() === 'Playing') {
                     this._selected = name;
+                    // "Play one player at a time" – but leave players that were already running at startup alone
+                    if (this._cfg.singlePlayer &&
+                        GLib.get_monotonic_time() - this._startedAt > STARTUP_GRACE_US)
+                        this._pauseOthers(name);
+                }
                 this._update();
             });
             this._players.set(name, proxy);
+            this._meta.set(name, {entry: null});
+            this._fetchDesktopEntry(name);
             if (proxy.PlaybackStatus === 'Playing' || !this._selected)
                 this._selected = name;
             this._update();
         });
     }
 
+    _fetchDesktopEntry(name) {
+        Gio.DBus.session.call(name, MPRIS_PATH, 'org.freedesktop.DBus.Properties', 'Get',
+            new GLib.Variant('(ss)', [ROOT_IFACE, 'DesktopEntry']),
+            GLib.VariantType.new('(v)'), Gio.DBusCallFlags.NONE, 1000, null,
+            (conn, res) => {
+                try {
+                    const [entry] = conn.call_finish(res).recursiveUnpack();
+                    if (this._destroyed || !this._players.has(name)) return;
+                    this._meta.set(name, {entry});
+                    this._switchKey = '';
+                    this._update();
+                } catch (e) { /* player has no DesktopEntry */ }
+            });
+    }
+
     _removePlayer(name) {
         this._players.delete(name);
+        this._meta.delete(name);
         if (this._selected === name) this._selected = null;
         this._update();
     }
@@ -306,36 +472,74 @@ class MusicIndicator extends PanelMenu.Button {
         return n ? this._players.get(n) : null;
     }
 
-    _rebuildChips() {
-        const names = [...this._players.keys()];
-        const active = this._activeName();
-        const key = `${names.join('|')}#${active}`;
-        if (key === this._chipsKey) return;
-        this._chipsKey = key;
-
-        this._chips.destroy_all_children();
-        this._chips.visible = names.length > 1;
-        if (names.length < 2) return;
-        for (const n of names) {
-            const chip = new St.Button({
-                label: playerLabel(n),
-                style_class: n === active ? 'mf-chip mf-chip-active' : 'mf-chip',
-                reactive: true, track_hover: true,
-            });
-            chip.connect('clicked', () => { this._selected = n; this._update(); });
-            this._chips.add_child(chip);
+    _playerGIcon(name) {
+        try {
+            const sys = Shell.AppSystem.get_default();
+            const entry = this._meta.get(name)?.entry;
+            const app = (entry && sys.lookup_app(`${entry}.desktop`)) ||
+                sys.lookup_app(`${busId(name)}.desktop`);
+            return app?.get_icon() ?? null;
+        } catch (e) {
+            return null;
         }
     }
 
-    // ---------------------------------------------------------------- update
+    _applyPlayerIcon(widget, name) {
+        const gicon = name ? this._playerGIcon(name) : null;
+        if (gicon) {
+            widget.gicon = gicon;
+        } else {
+            widget.gicon = null;
+            widget.icon_name = FALLBACK_ICON;
+        }
+    }
+
+    _rebuildSwitcher() {
+        if (!this._cfg.playerSwitcher) return;
+        const names = [...this._players.keys()];
+        const active = this._activeName();
+        const key = `${names.join('|')}#${active}#${[...this._meta.values()].map(m => m.entry).join(',')}`;
+        if (key === this._switchKey) return;
+        this._switchKey = key;
+
+        this._switcher.destroy_all_children();
+        if (names.length < 2) return;
+        for (const n of names) {
+            const icon = new St.Icon({icon_size: 18});
+            this._applyPlayerIcon(icon, n);
+            const btn = new St.Button({
+                style_class: n === active ? 'mf-chip mf-chip-active' : 'mf-chip',
+                child: icon, reactive: true, track_hover: true,
+            });
+            btn.connect('clicked', () => { this._selected = n; this._update(); });
+            this._switcher.add_child(btn);
+        }
+    }
+
+    // ============================================================== UPDATE
     _update() {
         if (this._destroyed) return;
+        const c = this._cfg;
         const p = this._active();
-        this.visible = !!p;
-        this._rebuildChips();
+        const name = this._activeName();
+
+        this.visible = !!p || !c.hideWhenIdle;
+        this._rebuildSwitcher();
+        if (this._pIcon) this._applyPlayerIcon(this._pIcon, name);
+        this._applyPlayerIcon(this._artIcon, name);
+
         if (!p) {
             this._stopCava();
             this._dropBars();
+            this._trackId = null;
+            this._length = 0;
+            this._position = 0;
+            this._title.text = 'Nothing playing';
+            this._artist.text = '';
+            this._setText('Nothing playing');
+            this._setArt(null);
+            this._syncControls(null);
+            this._renderProgress();
             return;
         }
 
@@ -347,29 +551,107 @@ class MusicIndicator extends PanelMenu.Button {
 
         this._title.text = title;
         this._artist.text = artist;
-        this._panelLabel.text = artist ? `${artist} – ${title}` : title;
 
-        const playing = p.PlaybackStatus === 'Playing';
-        this._playBtn.child.icon_name = playing
-            ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+        const parts = [];
+        if (c.showArtist && artist) parts.push(artist);
+        if (c.showTitle) parts.push(title);
+        this._setText(parts.join(' – '));
 
-        // Shuffle / repeat (hidden when the player doesn't support them)
-        const hasShuffle = p.Shuffle !== null && p.Shuffle !== undefined;
-        this._shuffleBtn.visible = hasShuffle;
-        this._setToggle(this._shuffleBtn, hasShuffle && p.Shuffle === true);
-        const hasLoop = !!p.LoopStatus;
-        this._repeatBtn.visible = hasLoop;
-        this._setToggle(this._repeatBtn, hasLoop && p.LoopStatus !== 'None');
-        this._repeatBtn.child.icon_name = p.LoopStatus === 'Track'
-            ? 'media-playlist-repeat-song-symbolic' : 'media-playlist-repeat-symbolic';
-
-        this._setArt(md['mpris:artUrl'] ?? null);
-        this._syncVisualizer(playing);
+        this._syncControls(p);
+        if (c.cardAlbumArt) this._setArt(md['mpris:artUrl'] ?? null);
+        this._syncVisualizer(p.PlaybackStatus === 'Playing');
         if (this.menu.isOpen) this._pollPosition();
         else this._renderProgress();
     }
 
-    // ------------------------------------------------------------ album art
+    _syncControls(p) {
+        const hasShuffle = !!p && p.Shuffle !== null && p.Shuffle !== undefined;
+        const hasLoop = !!p?.LoopStatus;
+        const canSeek = !!p?.CanSeek;
+        const playing = p?.PlaybackStatus === 'Playing';
+
+        for (const b of this._shuffleBtns) {
+            b.visible = hasShuffle;
+            this._setToggle(b, hasShuffle && p.Shuffle === true);
+        }
+        for (const b of this._loopBtns) {
+            b.visible = hasLoop;
+            this._setToggle(b, hasLoop && p.LoopStatus !== 'None');
+            b.child.icon_name = p?.LoopStatus === 'Track'
+                ? 'media-playlist-repeat-song-symbolic' : 'media-playlist-repeat-symbolic';
+        }
+        for (const b of this._skipBtns) b.visible = canSeek;
+        for (const b of this._playBtns)
+            b.child.icon_name = playing ? 'media-playback-pause-symbolic' : 'media-playback-start-symbolic';
+    }
+
+    // ======================================================== SCROLLING TEXT
+    _setText(text) {
+        if (!this._label1 || text === this._text) return;
+        this._text = text;
+        this._layoutText(true);
+    }
+
+    _stopScroll() {
+        this._scroller?.remove_all_transitions();
+        if (this._scroller) this._scroller.translation_x = 0;
+    }
+
+    _layoutText(allowRetry) {
+        if (this._destroyed || !this._label1) return;
+        const c = this._cfg;
+        this._stopScroll();
+
+        const text = this._text ?? '';
+        this._label1.text = text;
+        this._label1.set_width(-1);
+        this._label1.x = 0;
+        this._label2.hide();
+
+        const [, nat] = this._label1.get_preferred_width(-1);
+        if (nat === 0 && text && allowRetry) {   // not styled yet: measure again once idle
+            GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                this._layoutText(false);
+                return GLib.SOURCE_REMOVE;
+            });
+            return;
+        }
+        if (nat <= c.textWidth) return;
+
+        if (!c.scrollText) {                      // shorten with an ellipsis
+            this._label1.set_width(c.textWidth);
+            return;
+        }
+
+        if (c.scrollRepeat) {
+            this._label2.text = text;
+            this._label2.x = nat + SCROLL_GAP;
+            this._label2.show();
+            this._runScroll(nat + SCROLL_GAP, true);
+        } else {
+            this._runScroll(nat - c.textWidth, false);
+        }
+    }
+
+    _runScroll(dist, loop) {
+        const c = this._cfg;
+        const duration = Math.max(300, Math.round(dist / c.scrollSpeed * 1000));
+        const from = c.scrollReverse ? -dist : 0;
+        const to = c.scrollReverse ? 0 : -dist;
+        const step = (first) => {
+            if (this._destroyed) return;
+            this._scroller.translation_x = from;
+            this._scroller.ease({
+                translation_x: to, duration,
+                delay: first ? SCROLL_PAUSE_MS : 0,
+                mode: Clutter.AnimationMode.LINEAR,
+                onComplete: () => { if (loop) step(false); },
+            });
+        };
+        step(true);
+    }
+
+    // ============================================================ ALBUM ART
     _setArt(url) {
         if (url === this._artUrl) return;
         this._artUrl = url;
@@ -384,7 +666,7 @@ class MusicIndicator extends PanelMenu.Button {
         if (!/^https?:\/\//.test(url)) { this._applyArt(null); return; }
 
         const cached = GLib.build_filenamev([
-            CACHE_DIR, GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, url, -1),
+            ART_DIR, GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, url, -1),
         ]);
         if (GLib.file_test(cached, GLib.FileTest.EXISTS)) { this._applyArt(cached); return; }
 
@@ -398,7 +680,7 @@ class MusicIndicator extends PanelMenu.Button {
                 const bytes = session.send_and_read_finish(res);
                 if (msg.get_status() !== Soup.Status.OK) return;
                 if (this._destroyed || this._artUrl !== url) return;
-                GLib.mkdir_with_parents(CACHE_DIR, 0o755);
+                GLib.mkdir_with_parents(ART_DIR, 0o755);
                 GLib.file_set_contents(cached, bytes.get_data());
                 this._applyArt(cached);
             } catch (e) {
@@ -411,20 +693,15 @@ class MusicIndicator extends PanelMenu.Button {
     _applyArt(path) {
         if (path) {
             const uri = GLib.filename_to_uri(path, null);
-            const css = `background-image: url("${uri}"); background-size: cover;`;
-            this._art.style = css;
-            this._thumb.style = css;
+            this._art.style = `background-image: url("${uri}"); background-size: cover;`;
             this._artIcon.hide();
-            this._thumb.visible = this._showThumb;
         } else {
             this._art.style = '';
-            this._thumb.style = '';
             this._artIcon.show();
-            this._thumb.hide();
         }
     }
 
-    // ------------------------------------------------------------- progress
+    // ============================================================ PROGRESS
     _startPolling() {
         this._pollPosition();
         this._pollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
@@ -454,8 +731,9 @@ class MusicIndicator extends PanelMenu.Button {
     }
 
     _renderProgress() {
+        this._progressBox.visible = this._cfg.seekBar && this._length > 0;
         const frac = this._length > 0 ? Math.min(1, Math.max(0, this._position / this._length)) : 0;
-        this._fill.width = Math.round(PROGRESS_W * frac);
+        this._fill.width = Math.round(this._innerW * frac);
         this._elapsed.text = fmtTime(this._position);
         this._remaining.text = this._length > 0 ? `-${fmtTime(this._length - this._position)}` : '';
     }
@@ -465,16 +743,17 @@ class MusicIndicator extends PanelMenu.Button {
         if (!p || !this._trackId || this._length <= 0) return;
         const [sx] = event.get_coords();
         const [tx] = this._track.get_transformed_position();
-        const frac = Math.min(1, Math.max(0, (sx - tx) / PROGRESS_W));
+        const frac = Math.min(1, Math.max(0, (sx - tx) / this._innerW));
         const pos = Math.floor(frac * this._length);
         p.SetPositionRemote(this._trackId, pos);
         this._position = pos;
         this._renderProgress();
     }
 
-    // ------------------------------------------------------------ visualizer
+    // ========================================================== VISUALIZER
     _syncVisualizer(playing) {
-        if (playing && this._useCava) this._startCava();
+        if (!this._cfg.showVisualizer) return;
+        if (playing && this._cfg.useCava) this._startCava();
         else this._stopCava();
         if (!playing) this._dropBars();
     }
@@ -484,7 +763,7 @@ class MusicIndicator extends PanelMenu.Button {
         try {
             GLib.mkdir_with_parents(CACHE_DIR, 0o755);
             const conf = GLib.build_filenamev([CACHE_DIR, 'cava.conf']);
-            GLib.file_set_contents(conf, cavaConfig(this._barCount, this._cavaMethod));
+            GLib.file_set_contents(conf, cavaConfig(this._cfg.barCount, this._cfg.cavaMethod));
             this._cava = Gio.Subprocess.new(['cava', '-p', conf],
                 Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
             this._cavaCancellable = new Gio.Cancellable();
@@ -526,7 +805,7 @@ class MusicIndicator extends PanelMenu.Button {
     }
 
     _fallbackTick() {
-        if (this._cava) return;
+        if (this._cava || !this._bars.length) return;
         if (this._active()?.PlaybackStatus !== 'Playing') return;
         for (const bar of this._bars) {
             const h = BAR_MIN + Math.floor(Math.random() * (BAR_MAX - BAR_MIN));
@@ -539,11 +818,12 @@ class MusicIndicator extends PanelMenu.Button {
             bar.ease({height: BAR_MIN, duration: 200, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
     }
 
-    // --------------------------------------------------------------- cleanup
+    // ============================================================= CLEANUP
     cleanup() {
         this._destroyed = true;
         this._stopCava();
         this._stopPolling();
+        this._stopScroll();
         this._artCancellable?.cancel();
         this._session?.abort();
         this._session = null;
@@ -556,11 +836,12 @@ class MusicIndicator extends PanelMenu.Button {
 export default class MusicFlyoutExtension extends Extension {
     enable() {
         this._settings = this.getSettings();
-        this._settingsId = this._settings.connect('changed', () => this._rebuild());
+        this._settingsId = this._settings.connect('changed', () => this._scheduleRebuild());
         this._create();
     }
 
     disable() {
+        if (this._rebuildId) { GLib.source_remove(this._rebuildId); this._rebuildId = 0; }
         if (this._settingsId) {
             this._settings.disconnect(this._settingsId);
             this._settingsId = 0;
@@ -572,7 +853,7 @@ export default class MusicFlyoutExtension extends Extension {
     _create() {
         const pos = this._settings.get_string('panel-position');
         const box = ['left', 'center', 'right'].includes(pos) ? pos : 'center';
-        this._indicator = new MusicIndicator(this._settings);
+        this._indicator = new MusicIndicator(this._settings, this);
         Main.panel.addToStatusArea(this.uuid, this._indicator, 0, box);
     }
 
@@ -582,9 +863,14 @@ export default class MusicFlyoutExtension extends Extension {
         this._indicator = null;
     }
 
-    // Any preference change simply rebuilds the pill with the new settings.
-    _rebuild() {
-        this._destroyIndicator();
-        this._create();
+    // Any preference change rebuilds the indicator (debounced, so "Reset" doesn't rebuild 30 times).
+    _scheduleRebuild() {
+        if (this._rebuildId) GLib.source_remove(this._rebuildId);
+        this._rebuildId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+            this._rebuildId = 0;
+            this._destroyIndicator();
+            this._create();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 }
