@@ -1,7 +1,7 @@
 /* ---------- Panel pill ---------- */
 .mf-pill { border-radius: 99px; background-color: rgba(255,255,255,0.07); }
 .mf-pill:hover, .mf-pill:focus, .mf-pill:active { background-color: rgba(255,255,255,0.16); }
-.mf-pill-box { spacing: 6px; padding: 0 2px; }
+.mf-pill-box { spacing: 0; padding: 0 2px; }
 .panel-button.mf-join-left { border-radius: 99px 0 0 99px; }
 .panel-button.mf-join-right { border-radius: 0 99px 99px 0; }
 .mf-label { font-weight: 600; }
