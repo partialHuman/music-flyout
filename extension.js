@@ -13,6 +13,8 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
 const BAR_MIN = 3;
 const BAR_MAX = 18;
+const CBAR_MIN = 3;
+const CBAR_MAX = 16;
 const CARD_PAD = 14;
 const SCROLL_GAP = 40;
 const SCROLL_PAUSE_MS = 1500;
@@ -72,6 +74,7 @@ function readConfig(s) {
         barCount: i('bar-count'),
         useCava: b('use-cava'),
         cavaMethod: str('cava-method') === 'pipewire' ? 'pipewire' : 'pulse',
+        cardStyle: str('card-style') === 'compact' ? 'compact' : 'default',
         cardAlbumArt: b('card-album-art'),
         albumArtSize: str('album-art-size'),
         cardWidth: i('card-width'),
@@ -413,6 +416,21 @@ class MusicIndicator extends PanelMenu.Button {
         const W = this._innerW;
         const content = vbox({style_class: 'mf-content', width: c.cardWidth});
 
+        this._compact = c.cardStyle === 'compact';
+        this._wantVis = c.showVisualizer || this._compact;
+        this._cardBars = [];
+        if (this._compact) this._buildCompactCard(content);
+        else this._buildDefaultCard(content);
+
+        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        item.add_style_class_name('mf-item');
+        item.add_child(content);
+        this.menu.addMenuItem(item);
+    }
+
+    _buildDefaultCard(content) {
+        const c = this._cfg;
+        const W = this._innerW;
         // Album art
         const sizes = {small: 120, medium: 200, large: W};
         this._artSize = Math.min(sizes[c.albumArtSize] ?? W, W);
@@ -431,23 +449,7 @@ class MusicIndicator extends PanelMenu.Button {
         content.add_child(this._title);
         content.add_child(this._artist);
 
-        // Seek bar
-        this._progressBox = vbox({visible: false});
-        this._track = new St.Widget({style_class: 'mf-track', reactive: true, track_hover: true, width: W, height: 6});
-        this._fill = new St.Widget({style_class: 'mf-fill', width: 0, height: 6});
-        this._track.add_child(this._fill);
-        this._track.connect('button-press-event', (_a, event) => {
-            this._seekFromEvent(event);
-            return Clutter.EVENT_STOP;
-        });
-        this._progressBox.add_child(this._track);
-        const times = new St.BoxLayout({width: W});
-        this._elapsed = new St.Label({style_class: 'mf-time', text: '0:00', x_expand: true});
-        this._remaining = new St.Label({style_class: 'mf-time', text: '-0:00'});
-        times.add_child(this._elapsed);
-        times.add_child(this._remaining);
-        this._progressBox.add_child(times);
-        content.add_child(this._progressBox);
+        content.add_child(this._buildProgress(W));
 
         // Controls: [shuffle]  [skip-back prev PLAY next skip-fwd]  [loop]
         const controls = new St.BoxLayout({style_class: 'mf-controls', width: W});
@@ -475,23 +477,122 @@ class MusicIndicator extends PanelMenu.Button {
 
         // Bottom row: player switcher + settings button
         const bottom = new St.BoxLayout({style_class: 'mf-bottom', width: W});
+        this._bottom = bottom;
         this._switcher = new St.BoxLayout({style_class: 'mf-switcher', x_expand: true});
         bottom.add_child(this._switcher);
+        bottom.add_child(this._makeGear(16, 'mf-gear'));
+        content.add_child(bottom);
+    }
+
+    _buildProgress(W) {
+        // Seek bar
+        this._progressBox = vbox({visible: false});
+        this._track = new St.Widget({style_class: 'mf-track', reactive: true, track_hover: true, width: W, height: 6});
+        this._fill = new St.Widget({style_class: 'mf-fill', width: 0, height: 6});
+        this._track.add_child(this._fill);
+        this._track.connect('button-press-event', (_a, event) => {
+            this._seekFromEvent(event);
+            return Clutter.EVENT_STOP;
+        });
+        this._progressBox.add_child(this._track);
+        const times = new St.BoxLayout({width: W});
+        this._elapsed = new St.Label({style_class: 'mf-time', text: '0:00', x_expand: true});
+        this._remaining = new St.Label({style_class: 'mf-time', text: '-0:00'});
+        times.add_child(this._elapsed);
+        times.add_child(this._remaining);
+        this._progressBox.add_child(times);
+        return this._progressBox;
+    }
+
+    _makeGear(size, styleClass) {
         const gear = new St.Button({
-            style_class: 'mf-gear', reactive: true, track_hover: true, can_focus: true,
-            child: new St.Icon({icon_name: 'preferences-system-symbolic', icon_size: 16}),
+            style_class: styleClass, reactive: true, track_hover: true, can_focus: true,
+            x_align: Clutter.ActorAlign.END,
+            child: new St.Icon({icon_name: 'preferences-system-symbolic', icon_size: size}),
         });
         gear.connect('clicked', () => {
             this.menu.close();
             this._ext.openPreferences();
         });
-        bottom.add_child(gear);
-        content.add_child(bottom);
+        return gear;
+    }
 
-        const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
-        item.add_style_class_name('mf-item');
-        item.add_child(content);
-        this.menu.addMenuItem(item);
+    // Compact card: thumbnail (with player-icon badge) beside the track text, visualizer top-right,
+    // seek bar and evenly spread controls underneath.
+    _buildCompactCard(content) {
+        const c = this._cfg;
+        const W = this._innerW;
+        const S = {small: 56, medium: 72, large: 88}[c.albumArtSize] ?? 88;
+        const BADGE = 22;
+        const rightW = Math.max(22, c.barCount * 4);
+        const textW = Math.max(60, W - (c.cardAlbumArt ? S + 12 : 0) - rightW - 8);
+        this._artSize = S;
+
+        const top = new St.BoxLayout({style_class: 'mf-ctop', width: W});
+
+        this._artIcon = new St.Icon({
+            icon_name: FALLBACK_ICON, icon_size: Math.round(S / 2), style_class: 'mf-art-icon',
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._art = new St.Bin({style_class: 'mf-art mf-art-c', width: S, height: S, child: this._artIcon});
+        this._badge = new St.Icon({icon_name: FALLBACK_ICON, icon_size: BADGE, style_class: 'mf-badge'});
+        this._badge.set_position(S - BADGE + 6, S - BADGE + 6);
+        const artWrap = new St.Widget({
+            width: S, height: S, y_align: Clutter.ActorAlign.START,
+            style: 'margin-right: 12px;', visible: c.cardAlbumArt,
+        });
+        artWrap.add_child(this._art);
+        artWrap.add_child(this._badge);
+        top.add_child(artWrap);
+
+        const col = vbox({x_expand: true, y_align: Clutter.ActorAlign.CENTER});
+        this._title = new St.Label({style_class: 'mf-title-c', width: textW});
+        this._artist = new St.Label({style_class: 'mf-artist-c', width: textW});
+        col.add_child(this._title);
+        col.add_child(this._artist);
+        top.add_child(col);
+
+        const right = vbox({width: rightW});
+        const bars = new St.BoxLayout({style_class: 'mf-cbars', x_align: Clutter.ActorAlign.END});
+        for (let i = 0; i < c.barCount; i++) {
+            const bar = new St.Widget({style_class: 'mf-cbar', y_align: Clutter.ActorAlign.CENTER, height: CBAR_MIN});
+            this._cardBars.push(bar);
+            bars.add_child(bar);
+        }
+        right.add_child(bars);
+        right.add_child(new St.Widget({y_expand: true}));
+        right.add_child(this._makeGear(14, 'mf-gear mf-gear-c'));
+        top.add_child(right);
+        content.add_child(top);
+
+        const progress = this._buildProgress(W);
+        progress.add_style_class_name('mf-prog-c');
+        content.add_child(progress);
+
+        // Controls spread evenly across the card width
+        const controls = new St.BoxLayout({style_class: 'mf-controls mf-controls-c', width: W});
+        const add = (btn) => controls.add_child(new St.Bin({
+            x_expand: true, x_align: Clutter.ActorAlign.CENTER, child: btn,
+        }));
+        if (c.cardShuffle)
+            add(this._reg(this._shuffleBtns, this._makeButton('media-playlist-shuffle-symbolic', 18, '', () => this._toggleShuffle())));
+        if (c.cardSkip)
+            add(this._reg(this._skipBtns, this._makeButton('media-seek-backward-symbolic', 18, '', () => this._skip(-1))));
+        add(this._makeButton('media-skip-backward-symbolic', 22, '', () => this._active()?.PreviousRemote()));
+        add(this._reg(this._playBtns,
+            this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._active()?.PlayPauseRemote())));
+        add(this._makeButton('media-skip-forward-symbolic', 22, '', () => this._active()?.NextRemote()));
+        if (c.cardSkip)
+            add(this._reg(this._skipBtns, this._makeButton('media-seek-forward-symbolic', 18, '', () => this._skip(1))));
+        if (c.cardLoop)
+            add(this._reg(this._loopBtns, this._makeButton('media-playlist-repeat-symbolic', 18, '', () => this._cycleLoop())));
+        content.add_child(controls);
+
+        // Player switcher: only shown while more than one player is running
+        this._bottom = new St.BoxLayout({style_class: 'mf-bottom', width: W, visible: false});
+        this._switcher = new St.BoxLayout({style_class: 'mf-switcher', x_expand: true});
+        this._bottom.add_child(this._switcher);
+        content.add_child(this._bottom);
     }
 
     _reg(list, btn) {
@@ -959,6 +1060,7 @@ class MusicIndicator extends PanelMenu.Button {
         const key = `${names.join('|')}#${active}#${[...this._meta.values()].map(m => m.entry).join(',')}`;
         if (key === this._switchKey) return;
         this._switchKey = key;
+        if (this._compact) this._bottom.visible = names.length >= 2;
 
         this._switcher.destroy_all_children();
         if (names.length < 2) return;
@@ -985,7 +1087,8 @@ class MusicIndicator extends PanelMenu.Button {
         if (this._controlsBox) this._controlsBox.visible = this.visible;
         this._rebuildSwitcher();
         this._updatePanelIcon();
-        this._applyPlayerIcon(this._artIcon, name);
+        if (this._compact) this._applyPlayerIcon(this._badge, name);
+        else this._applyPlayerIcon(this._artIcon, name);
 
         if (!p) {
             this._stopCava();
@@ -1009,7 +1112,8 @@ class MusicIndicator extends PanelMenu.Button {
         this._length = Number(md['mpris:length'] ?? 0);
 
         this._title.text = title;
-        this._artist.text = artist;
+        const album = md['xesam:album'] ?? '';
+        this._artist.text = this._compact ? [artist, album].filter(Boolean).join(' — ') : artist;
 
         const parts = [];
         if (c.showArtist && artist) parts.push(artist);
@@ -1213,7 +1317,7 @@ class MusicIndicator extends PanelMenu.Button {
 
     // ========================================================== VISUALIZER
     _syncVisualizer(playing) {
-        if (!this._cfg.showVisualizer) return;
+        if (!this._wantVis) return;
         if (playing && this._cfg.useCava) this._startCava();
         else this._stopCava();
         if (!playing) this._dropBars();
@@ -1247,10 +1351,7 @@ class MusicIndicator extends PanelMenu.Button {
                     return;
                 }
                 const vals = line.split(';').filter(v => v !== '').map(Number);
-                for (let i = 0; i < this._bars.length && i < vals.length; i++) {
-                    const v = Math.min(100, Math.max(0, vals[i]));
-                    this._bars[i].height = Math.round(BAR_MIN + (v / 100) * (BAR_MAX - BAR_MIN));
-                }
+                this._applyLevels(vals.map(v => Math.min(1, Math.max(0, (v || 0) / 100))), false);
                 this._readCava(s, cancellable);
             } catch (e) { /* cancelled */ }
         });
@@ -1265,18 +1366,25 @@ class MusicIndicator extends PanelMenu.Button {
         }
     }
 
+    // levels: array of 0..1 values, one per bar (missing = 0)
+    _applyLevels(levels, animate) {
+        const set = (bars, lo, hi) => bars.forEach((bar, i) => {
+            const h = Math.round(lo + (levels[i] ?? 0) * (hi - lo));
+            if (animate) bar.ease({height: h, duration: 130, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            else bar.height = h;
+        });
+        set(this._bars, BAR_MIN, BAR_MAX);
+        set(this._cardBars, CBAR_MIN, CBAR_MAX);
+    }
+
     _fallbackTick() {
-        if (this._cava || !this._bars.length) return;
+        if (this._cava || (!this._bars.length && !this._cardBars.length)) return;
         if (this._active()?.PlaybackStatus !== 'Playing') return;
-        for (const bar of this._bars) {
-            const h = BAR_MIN + Math.floor(Math.random() * (BAR_MAX - BAR_MIN));
-            bar.ease({height: h, duration: 130, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-        }
+        this._applyLevels(Array.from({length: this._cfg.barCount}, () => Math.random()), true);
     }
 
     _dropBars() {
-        for (const bar of this._bars)
-            bar.ease({height: BAR_MIN, duration: 200, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        this._applyLevels([], true);
     }
 
     // ============================================================= CLEANUP
