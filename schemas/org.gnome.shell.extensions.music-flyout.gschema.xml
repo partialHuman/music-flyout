@@ -45,6 +45,8 @@
     <key name="click-left" type="s"><default>'play-pause'</default><summary>Left click action</summary></key>
     <key name="click-middle" type="s"><default>'none'</default><summary>Middle click action</summary></key>
     <key name="click-right" type="s"><default>'open-card'</default><summary>Right click action</summary></key>
+    <key name="launch-on-play" type="b"><default>true</default><summary>Start a player when nothing is playing and play is pressed</summary></key>
+    <key name="launch-app" type="s"><default>'spotify'</default><summary>Application to open (name or desktop id)</summary></key>
     <key name="hover-open" type="b"><default>false</default><summary>Show the card when hovering the indicator</summary></key>
     <key name="hover-open-delay" type="i"><range min="0" max="3000"/><default>300</default><summary>Hover open delay (ms)</summary></key>
     <key name="hover-close-delay" type="i"><range min="100" max="3000"/><default>400</default><summary>Hover close delay (ms)</summary></key>
