@@ -1,5 +1,26 @@
 # Changelog
 
+## v14
+- Added a third **Playlists** card style.
+- Added Spotify Web API authentication and playlist retrieval.
+- Added cached playlist loading with background refresh.
+- Added playlist list height configuration.
+- Added playlist artwork, owner and track-count display.
+- Added playlist selection that opens the playlist in the Spotify desktop app and attempts playback.
+- Added Spotify settings for Client ID, connect/disconnect, redirect URI and setup guidance.
+
+## v13
+- Added **Start a player on play** behavior when no MPRIS player is running.
+- Added configurable application/desktop ID to launch, defaulting to `spotify`.
+- Added startup status text and retry logic while waiting for the player to become available.
+- Applied the behavior to panel, default-card and compact-card play controls.
+
+## v12
+- Fixed GNOME 46+ blur creation by trying `radius` first and retaining a `sigma` fallback for older GNOME versions.
+- Added a log message when the blur effect cannot be created.
+- Added five panel positions: Far left, Left, Center, Right and Far right.
+- Added tighter card corners while the blur effect is enabled.
+
 ## v11
 - Added Default / Compact card style.
 - Added compact thumbnail, metadata, visualizer and controls layout.
