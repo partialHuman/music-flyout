@@ -1,5 +1,8 @@
 import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
+import Gdk from 'gi://Gdk';
+import Soup from 'gi://Soup?version=3.0';
+import * as Spotify from './spotify.js';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
@@ -213,6 +216,113 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         settings.bind('launch-app', launchApp, 'text', Gio.SettingsBindFlags.DEFAULT);
         launchToggle.bind_property('active', launchApp, 'sensitive', GObject.BindingFlags.SYNC_CREATE);
 
+        // ---- Spotify account (Playlists card style) -----------------------
+        const toast = (title) => window.add_toast(new Adw.Toast({title}));
+        const flatButton = (label, cls) => {
+            const b = new Gtk.Button({label, valign: Gtk.Align.CENTER});
+            b.add_css_class(cls ?? 'flat');
+            return b;
+        };
+
+        const spotifyHelp = new Adw.ActionRow({
+            title: 'One-time setup',
+            subtitle: 'Spotify only lets apps owned by a Premium account use its Web API, so you create your own free app: ' +
+                '1) Open the dashboard and create an app (tick "Web API"). ' +
+                '2) Add the redirect URI shown below to it. ' +
+                '3) Paste the app\'s Client ID below and press Connect.',
+        });
+        const dashBtn = flatButton('Open dashboard');
+        dashBtn.connect('clicked', () =>
+            Gio.AppInfo.launch_default_for_uri('https://developer.spotify.com/dashboard', null));
+        spotifyHelp.add_suffix(dashBtn);
+
+        const redirectRow = new Adw.ActionRow({title: 'Redirect URI', subtitle: Spotify.REDIRECT_URI});
+        redirectRow.subtitle_selectable = true;
+        const copyBtn = flatButton('Copy');
+        copyBtn.connect('clicked', () => {
+            Gdk.Display.get_default().get_clipboard().set(Spotify.REDIRECT_URI);
+            toast('Redirect URI copied.');
+        });
+        redirectRow.add_suffix(copyBtn);
+
+        const clientIdRow = new Adw.EntryRow({title: 'Client ID'});
+        settings.bind('spotify-client-id', clientIdRow, 'text', Gio.SettingsBindFlags.DEFAULT);
+
+        const accountRow = new Adw.ActionRow({title: 'Spotify account'});
+        const connectBtn = flatButton('Connect', 'suggested-action');
+        const disconnectBtn = flatButton('Disconnect', 'destructive-action');
+        accountRow.add_suffix(disconnectBtn);
+        accountRow.add_suffix(connectBtn);
+        const refreshAccount = () => {
+            const auth = Spotify.loadAuth();
+            accountRow.subtitle = auth ? 'Connected' : 'Not connected';
+            connectBtn.label = auth ? 'Reconnect' : 'Connect';
+            disconnectBtn.visible = !!auth;
+        };
+        refreshAccount();
+        disconnectBtn.connect('clicked', () => {
+            Spotify.clearAuth();
+            refreshAccount();
+            toast('Disconnected from Spotify.');
+        });
+
+        connectBtn.connect('clicked', () => {
+            const clientId = settings.get_string('spotify-client-id').trim();
+            if (!clientId) {
+                toast('Enter your Client ID first.');
+                return;
+            }
+            const verifier = Spotify.newVerifier();
+            const state = Spotify.newState();
+            const session = new Soup.Session({timeout: 15});
+            const server = new Soup.Server();
+            let timeoutId = 0;
+            let finished = false;
+
+            const finish = (message) => {
+                if (finished) return;
+                finished = true;
+                try { server.disconnect(); } catch (e) { /* already stopped */ }
+                if (timeoutId) GLib.source_remove(timeoutId);
+                toast(message);
+                refreshAccount();
+            };
+
+            server.add_handler('/callback', (_srv, msg) => {
+                const query = msg.get_uri().get_query() ?? '';
+                const params = GLib.Uri.parse_params(query, -1, '&', GLib.UriParamsFlags.NONE);
+                const page = '<!doctype html><meta charset="utf-8"><title>Music Flyout</title>' +
+                    '<body style="font-family:sans-serif;text-align:center;margin-top:20vh">' +
+                    '<h2>You can close this tab</h2><p>Return to the Music Flyout settings.</p></body>';
+                msg.set_status(200, null);
+                msg.set_response('text/html; charset=utf-8', Soup.MemoryUse.COPY, new TextEncoder().encode(page));
+
+                if (params.error)
+                    finish(`Spotify: ${params.error}`);
+                else if (params.state !== state)
+                    finish('Login failed (state mismatch).');
+                else if (params.code)
+                    Spotify.exchangeCode(session, clientId, params.code, verifier)
+                        .then(() => finish('Connected to Spotify.'))
+                        .catch(e => finish(`Login failed: ${e.message}`));
+            });
+
+            try {
+                server.listen_local(Spotify.REDIRECT_PORT, Soup.ServerListenOptions.IPV4_ONLY);
+            } catch (e) {
+                toast(`Couldn't listen on port ${Spotify.REDIRECT_PORT}: ${e.message}`);
+                return;
+            }
+            timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 180, () => {
+                timeoutId = 0;
+                finish('Login timed out.');
+                return GLib.SOURCE_REMOVE;
+            });
+            Gio.AppInfo.launch_default_for_uri(
+                Spotify.authorizeUrl(clientId, Spotify.challengeFor(verifier), state), null);
+            toast('Finish the login in your browser…');
+        });
+
         // ---- Panel page --------------------------------------------------
         const panelPage = page('Panel', 'go-home-symbolic', [
             group('Placement', 'Where the indicator appears in the top panel.', [
@@ -291,8 +401,9 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         // ---- Card page ---------------------------------------------------
         const cardPage = page('Card', 'audio-x-generic-symbolic', [
             group('Appearance', 'The card is shown when you click the panel indicator.', [
-                choice('card-style', 'Card style', ['default', 'compact'], ['Default', 'Compact'],
-                    'Compact puts a small thumbnail beside the track details, like a media notification.'),
+                choice('card-style', 'Card style', ['default', 'compact', 'playlists'],
+                    ['Default', 'Compact', 'Playlists'],
+                    'Compact puts a small thumbnail beside the track details. Playlists lists your Spotify playlists – click one to play it (needs the Spotify setup below).'),
                 toggle('card-album-art', 'Album art', 'Falls back to the player icon when the track has no artwork.'),
                 choice('album-art-size', 'Album art size', ['small', 'medium', 'large'], ['Small', 'Medium', 'Large'],
                     'Compact style uses 56, 72 or 88 px thumbnails.'),
@@ -314,6 +425,13 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
                     'Shown at the left edge of the controls. Requires a player that supports shuffle.'),
                 toggle('card-loop', 'Loop button',
                     'Shown at the right edge of the controls. Cycles between off, the whole queue, and one track.'),
+            ]),
+            group('Spotify playlists', 'Needed for the Playlists card style. Playlists are only read, never changed.', [
+                spotifyHelp,
+                redirectRow,
+                clientIdRow,
+                accountRow,
+                spin('playlist-height', 'List height', 160, 600, 10, 'Height of the scrolling playlist list, in pixels.'),
             ]),
         ]);
 
