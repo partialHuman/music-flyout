@@ -1,5 +1,5 @@
 {
-  "uuid": "music-flyout@local",
+  "uuid": "music-flyout@partialHuman",
   "name": "Music Flyout",
   "description": "Fluent-style top-panel music controller with album art, progress bar, real audio visualizer (cava), shuffle/repeat and MPRIS player switching.",
   "shell-version": [
