@@ -68,3 +68,6 @@
 .mf-prog-c { padding-top: 12px; }
 .mf-controls-c { padding-top: 4px; }
 .mf-gear-c { padding: 2px; }
+
+/* ---------- Tighter corners while the (rectangular) blur is active ---------- */
+.mf-menu.mf-menu-blur { -arrow-border-radius: 14px; }
