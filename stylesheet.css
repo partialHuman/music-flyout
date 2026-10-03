@@ -71,3 +71,22 @@
 
 /* ---------- Tighter corners while the (rectangular) blur is active ---------- */
 .mf-menu.mf-menu-blur { -arrow-border-radius: 14px; }
+
+/* ---------- Playlists card ---------- */
+.mf-phead { spacing: 0; }
+.mf-play-s { padding: 8px; }
+.mf-plhead { padding-top: 14px; padding-bottom: 6px; }
+.mf-pltitle { font-size: 12px; font-weight: bold; color: rgba(255,255,255,0.7); }
+.mf-plscroll { }
+.mf-pllist { spacing: 2px; }
+.mf-plrow {
+    padding: 6px;
+    border-radius: 12px;
+    transition-duration: 120ms;
+}
+.mf-plrow:hover, .mf-plrow:focus { background-color: rgba(255,255,255,0.12); }
+.mf-plrow:active { background-color: rgba(255,255,255,0.2); }
+.mf-plcover { border-radius: 8px; background-color: rgba(255,255,255,0.08); }
+.mf-plname { font-size: 13px; font-weight: bold; color: #fff; }
+.mf-plsub { font-size: 11px; color: rgba(255,255,255,0.6); }
+.mf-plstatus { font-size: 12px; color: rgba(255,255,255,0.7); padding: 8px 4px; }
