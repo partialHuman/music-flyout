@@ -1,5 +1,16 @@
 # Music Flyout
 
+<p align="center">
+
+[![License](https://img.shields.io/github/license/partialHuman/music-flyout?style=flat-square&label=License&color=yellow)](https://github.com/partialHuman/music-flyout/blob/main/LICENSE)
+[![GNOME Shell](https://img.shields.io/badge/GNOME%20Shell-45--50-4A86CF?style=flat-square&logo=gnome&logoColor=white)](https://github.com/partialHuman/music-flyout)
+[![GitHub release](https://img.shields.io/github/v/release/partialHuman/music-flyout?style=flat-square&label=release)](https://github.com/partialHuman/music-flyout/releases)
+[![GitHub stars](https://img.shields.io/github/stars/partialHuman/music-flyout?style=flat-square&label=stars)](https://github.com/partialHuman/music-flyout/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/partialHuman/music-flyout?style=flat-square&label=issues)](https://github.com/partialHuman/music-flyout/issues)
+[![JavaScript](https://img.shields.io/badge/JavaScript-GJS-F7DF1E?style=flat-square&logo=javascript&logoColor=black)](https://github.com/partialHuman/music-flyout)
+
+</p>
+
 A Fluent-style music controller and visualizer for **GNOME Shell**, designed for a compact top-panel experience with an acrylic media card, album artwork, playback controls, real audio visualization, player switching, and Spotify playlist browsing.
 
 > **Current version: v14**
@@ -146,8 +157,8 @@ git clone https://github.com/partialHuman/music-flyout.git
 cd music-flyout
 chmod +x install.sh
 ./install.sh
-gnome-extensions enable music-flyout@local
-gnome-extensions prefs music-flyout@local
+gnome-extensions enable music-flyout@partialHuman
+gnome-extensions prefs music-flyout@partialHuman
 ```
 
 If GNOME Shell does not immediately load the extension, log out and back in.
@@ -253,7 +264,7 @@ journalctl -b -o cat /usr/bin/gnome-shell | grep -i "music flyout"
 
 ```bash
 gnome-extensions list | grep music-flyout
-gnome-extensions enable music-flyout@local
+gnome-extensions enable music-flyout@partialHuman
 ```
 
 ---
