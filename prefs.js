@@ -206,6 +206,13 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         secondEnable.connect('notify::active', updateSecondary);
         updateSecondary();
 
+        // ---- Start playback when nothing is running -----------------------
+        const launchToggle = toggle('launch-on-play', 'Start a player on play',
+            'Pressing any play/pause button (panel, card or left click) opens the application below and starts playback.');
+        const launchApp = new Adw.EntryRow({title: 'Application to open (name or desktop id)'});
+        settings.bind('launch-app', launchApp, 'text', Gio.SettingsBindFlags.DEFAULT);
+        launchToggle.bind_property('active', launchApp, 'sensitive', GObject.BindingFlags.SYNC_CREATE);
+
         // ---- Panel page --------------------------------------------------
         const panelPage = page('Panel', 'go-home-symbolic', [
             group('Placement', 'Where the indicator appears in the top panel.', [
@@ -259,6 +266,10 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
                 choice('click-left', 'Left click', CLICK_VALUES, CLICK_LABELS),
                 choice('click-middle', 'Middle click', CLICK_VALUES, CLICK_LABELS),
                 choice('click-right', 'Right click', CLICK_VALUES, CLICK_LABELS),
+            ]),
+            group('When nothing is playing', 'What the play button does while no media player is running.', [
+                launchToggle,
+                launchApp,
             ]),
             group('Hover', 'Show the card when the pointer rests on the panel indicator.', [
                 toggle('hover-open', 'Show card on hover',
