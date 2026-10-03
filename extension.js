@@ -6,6 +6,7 @@ import Clutter from 'gi://Clutter';
 import Shell from 'gi://Shell';
 import Soup from 'gi://Soup?version=3.0';
 import Gvc from 'gi://Gvc';
+import * as Spotify from './spotify.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
@@ -76,7 +77,9 @@ function readConfig(s) {
         barCount: i('bar-count'),
         useCava: b('use-cava'),
         cavaMethod: str('cava-method') === 'pipewire' ? 'pipewire' : 'pulse',
-        cardStyle: str('card-style') === 'compact' ? 'compact' : 'default',
+        cardStyle: ['compact', 'playlists'].includes(str('card-style')) ? str('card-style') : 'default',
+        spotifyClientId: str('spotify-client-id').trim(),
+        playlistHeight: i('playlist-height'),
         cardAlbumArt: b('card-album-art'),
         albumArtSize: str('album-art-size'),
         cardWidth: i('card-width'),
@@ -119,6 +122,7 @@ const PlayerProxy = Gio.DBusProxy.makeProxyWrapper(`
   <interface name="org.mpris.MediaPlayer2.Player">
     <method name="PlayPause"/>
     <method name="Play"/>
+    <method name="OpenUri"><arg type="s" direction="in" name="Uri"/></method>
     <method name="Pause"/>
     <method name="Next"/>
     <method name="Previous"/>
@@ -172,6 +176,14 @@ class MusicIndicator extends PanelMenu.Button {
         this._hoverWatchId = 0;
         this._outsideSince = 0;
         this._iconCache = new Map();
+        this._plItems = Spotify.loadPlaylistCache();
+        this._plLoadedAt = 0;
+        this._plLoading = false;
+        this._plGen = 0;
+        this._coverQueue = [];
+        this._coverActive = 0;
+        this._pendingUri = null;
+        this._ensureId = 0;
         this._innerW = this._cfg.cardWidth - 2 * CARD_PAD;
 
         this._players = new Map();
@@ -232,6 +244,7 @@ class MusicIndicator extends PanelMenu.Button {
         this.menu.connect('open-state-changed', (_m, open) => {
             if (open) {
                 this._startPolling();
+                if (this._playlists) this._loadPlaylists(false);
             } else {
                 this._stopPolling();
                 this._openedByHover = false;
@@ -424,9 +437,11 @@ class MusicIndicator extends PanelMenu.Button {
         const content = vbox({style_class: 'mf-content', width: c.cardWidth});
 
         this._compact = c.cardStyle === 'compact';
+        this._playlists = c.cardStyle === 'playlists';
         this._wantVis = c.showVisualizer || this._compact;
         this._cardBars = [];
         if (this._compact) this._buildCompactCard(content);
+        else if (this._playlists) this._buildPlaylistCard(content);
         else this._buildDefaultCard(content);
 
         const item = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
@@ -526,6 +541,216 @@ class MusicIndicator extends PanelMenu.Button {
 
     // Compact card: thumbnail (with player-icon badge) beside the track text, visualizer top-right,
     // seek bar and evenly spread controls underneath.
+    // ================================================= PLAYLISTS CARD STYLE
+    // A slim now-playing header, then every Spotify playlist of the connected account.
+    _buildPlaylistCard(content) {
+        const c = this._cfg;
+        const W = this._innerW;
+        this._artSize = 44;
+
+        const head = new St.BoxLayout({style_class: 'mf-phead', width: W});
+        this._artIcon = new St.Icon({
+            icon_name: FALLBACK_ICON, icon_size: 22, style_class: 'mf-art-icon',
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._art = new St.Bin({style_class: 'mf-art mf-art-c', width: 44, height: 44, child: this._artIcon});
+        head.add_child(this._art);
+
+        const textW = Math.max(60, W - 44 - 10 - 48);
+        const col = vbox({x_expand: true, y_align: Clutter.ActorAlign.CENTER, style: 'margin-left: 10px;'});
+        this._title = new St.Label({style_class: 'mf-title-c', width: textW});
+        this._artist = new St.Label({style_class: 'mf-artist-c', width: textW});
+        col.add_child(this._title);
+        col.add_child(this._artist);
+        head.add_child(col);
+        head.add_child(this._reg(this._playBtns,
+            this._makeButton('media-playback-start-symbolic', 20, 'mf-play mf-play-s', () => this._playPause())));
+        content.add_child(head);
+
+        const progress = this._buildProgress(W);
+        progress.add_style_class_name('mf-prog-c');
+        content.add_child(progress);
+
+        const titleRow = new St.BoxLayout({style_class: 'mf-plhead', width: W});
+        titleRow.add_child(new St.Label({text: 'Your playlists', style_class: 'mf-pltitle', x_expand: true}));
+        titleRow.add_child(this._makeButton('view-refresh-symbolic', 14, 'mf-pbtn', () => this._loadPlaylists(true)));
+        content.add_child(titleRow);
+
+        this._plScroll = new St.ScrollView({
+            style_class: 'mf-plscroll', width: W, height: c.playlistHeight,
+            hscrollbar_policy: St.PolicyType.NEVER, vscrollbar_policy: St.PolicyType.AUTOMATIC,
+            overlay_scrollbars: true,
+        });
+        this._plList = vbox({style_class: 'mf-pllist'});
+        try { this._plScroll.add_child(this._plList); } catch (e) { this._plScroll.set_child(this._plList); }
+        content.add_child(this._plScroll);
+
+        const bottom = new St.BoxLayout({style_class: 'mf-bottom', width: W});
+        this._bottom = bottom;
+        this._switcher = new St.BoxLayout({style_class: 'mf-switcher', x_expand: true});
+        bottom.add_child(this._switcher);
+        bottom.add_child(this._makeGear(16, 'mf-gear'));
+        content.add_child(bottom);
+
+        if (this._plItems?.length) this._renderPlaylists();
+        else this._plMessage('Open the card to load your playlists.', false);
+    }
+
+    _plMessage(text, withSettings) {
+        if (!this._plList) return;
+        this._plGen++;
+        this._plList.destroy_all_children();
+        const label = new St.Label({text, style_class: 'mf-plstatus', width: this._innerW - 12});
+        label.clutter_text.line_wrap = true;
+        this._plList.add_child(label);
+        if (withSettings) {
+            const btn = new St.Button({
+                label: 'Open settings', style_class: 'mf-chip', reactive: true, track_hover: true,
+                x_align: Clutter.ActorAlign.START,
+            });
+            btn.connect('clicked', () => {
+                this.menu.close();
+                this._ext.openPreferences();
+            });
+            this._plList.add_child(btn);
+        }
+    }
+
+    async _loadPlaylists(force) {
+        if (!this._playlists || this._destroyed || this._plLoading) return;
+        if (!this._cfg.spotifyClientId || !Spotify.loadAuth()) {
+            this._plMessage('Connect your Spotify account in the settings (Card → Spotify playlists) to see your playlists.', true);
+            return;
+        }
+        if (!force && this._plItems && GLib.get_monotonic_time() - this._plLoadedAt < 300 * 1000000) return;
+
+        this._plLoading = true;
+        if (!this._plItems?.length) this._plMessage('Loading playlists…', false);
+        try {
+            const items = await Spotify.fetchPlaylists(this._session);
+            if (this._destroyed) return;
+            this._plItems = items;
+            this._plLoadedAt = GLib.get_monotonic_time();
+            Spotify.savePlaylistCache(items);
+            this._renderPlaylists();
+        } catch (e) {
+            if (this._destroyed) return;
+            if (e.message === 'auth')
+                this._plMessage('Your Spotify login has expired. Reconnect it in the settings.', true);
+            else if (!this._plItems?.length)
+                this._plMessage(`Couldn't load your playlists: ${e.message}`, true);
+            logError(e, 'Music Flyout: playlists');
+        } finally {
+            this._plLoading = false;
+        }
+    }
+
+    _renderPlaylists() {
+        if (!this._plList) return;
+        const items = this._plItems ?? [];
+        if (!items.length) {
+            this._plMessage('No playlists found on this account.', false);
+            return;
+        }
+        this._plGen++;
+        this._coverQueue = [];
+        this._plList.destroy_all_children();
+        const rowW = this._innerW - 10;
+
+        for (const pl of items) {
+            const row = new St.Button({
+                style_class: 'mf-plrow', reactive: true, track_hover: true, can_focus: true, width: rowW,
+            });
+            const box = new St.BoxLayout({width: rowW - 12});
+
+            const icon = new St.Icon({icon_name: FALLBACK_ICON, icon_size: 18, style_class: 'mf-art-icon'});
+            const cover = new St.Bin({style_class: 'mf-plcover', width: 40, height: 40, child: icon,
+                y_align: Clutter.ActorAlign.CENTER});
+            box.add_child(cover);
+
+            const col = vbox({x_expand: true, y_align: Clutter.ActorAlign.CENTER, style: 'margin-left: 10px;'});
+            const textW = rowW - 12 - 40 - 10 - 4;
+            col.add_child(new St.Label({text: pl.name, style_class: 'mf-plname', width: textW}));
+            const sub = [pl.total != null ? `${pl.total} tracks` : '', pl.owner].filter(Boolean).join(' · ');
+            if (sub) col.add_child(new St.Label({text: sub, style_class: 'mf-plsub', width: textW}));
+            box.add_child(col);
+
+            row.set_child(box);
+            row.connect('clicked', () => this._playPlaylist(pl));
+            this._plList.add_child(row);
+
+            if (pl.image) {
+                this._queueCover(pl.image, path => {
+                    cover.style = `background-image: url("${GLib.filename_to_uri(path, null)}"); background-size: cover;`;
+                    icon.hide();
+                });
+            }
+        }
+        this._pumpCovers();
+    }
+
+    _queueCover(url, apply) {
+        const path = GLib.build_filenamev([
+            ART_DIR, GLib.compute_checksum_for_string(GLib.ChecksumType.SHA1, url, -1),
+        ]);
+        if (GLib.file_test(path, GLib.FileTest.EXISTS)) {
+            apply(path);
+            return;
+        }
+        this._coverQueue.push({gen: this._plGen, url, path, apply});
+    }
+
+    _pumpCovers() {
+        while (!this._destroyed && this._session && this._coverActive < 3 && this._coverQueue.length) {
+            const job = this._coverQueue.shift();
+            if (job.gen !== this._plGen) continue;
+            this._coverActive++;
+            Spotify.download(this._session, job.url, job.path)
+                .then(ok => {
+                    if (ok && !this._destroyed && job.gen === this._plGen) job.apply(job.path);
+                })
+                .catch(() => { /* cover is optional */ })
+                .finally(() => {
+                    this._coverActive--;
+                    this._pumpCovers();
+                });
+        }
+    }
+
+    _playPlaylist(pl) {
+        const uri = pl.uri ?? `spotify:playlist:${pl.id}`;
+        const name = [...this._players.keys()].find(n => busId(n).toLowerCase().includes('spotify'));
+        if (name) {
+            this._selected = name;
+            this._openUriAndPlay(name, uri);
+            this._update();
+            return;
+        }
+        // Spotify isn't running: start it and open the playlist as soon as it shows up on D-Bus
+        this._pendingUri = uri;
+        this._launchPlayer('spotify');
+        if (!this._launching) this._pendingUri = null;      // launch failed
+    }
+
+    _openUriAndPlay(name, uri) {
+        const p = this._players.get(name);
+        if (!p) return;
+        p.OpenUriRemote(uri, (_r, err) => {
+            if (err) logError(err, 'Music Flyout: OpenUri');
+        });
+        if (this._ensureId) GLib.source_remove(this._ensureId);
+        let tries = 0;
+        this._ensureId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1200, () => {
+            const player = this._players.get(name);
+            if (this._destroyed || !player || tries++ >= 5 || player.PlaybackStatus === 'Playing') {
+                this._ensureId = 0;
+                return GLib.SOURCE_REMOVE;
+            }
+            try { player.PlayRemote(); } catch (e) { /* ignore */ }
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
     _buildCompactCard(content) {
         const c = this._cfg;
         const W = this._innerW;
@@ -669,8 +894,8 @@ class MusicIndicator extends PanelMenu.Button {
         if (this._cfg.launchOnPlay) this._launchPlayer();
     }
 
-    _findLaunchApp() {
-        const want = this._cfg.launchApp.toLowerCase();
+    _findLaunchApp(app) {
+        const want = (app ?? this._cfg.launchApp).toLowerCase();
         if (!want) return null;
         const sys = Shell.AppSystem.get_default();
         const exact = sys.lookup_app(`${want}.desktop`);
@@ -683,11 +908,11 @@ class MusicIndicator extends PanelMenu.Button {
         return null;
     }
 
-    _launchPlayer() {
+    _launchPlayer(appName) {
         if (this._launching) return;
-        const info = this._findLaunchApp();
+        const info = this._findLaunchApp(appName);
         if (!info) {
-            Main.notify('Music Flyout', `Couldn't find an application matching "${this._cfg.launchApp}".`);
+            Main.notify('Music Flyout', `Couldn't find an application matching "${appName ?? this._cfg.launchApp}".`);
             return;
         }
         try {
@@ -708,7 +933,7 @@ class MusicIndicator extends PanelMenu.Button {
             return GLib.SOURCE_REMOVE;
         });
         // the player may already be on the bus (e.g. app running in the tray)
-        const existing = this._activeName();
+        const existing = this._pendingUri ? null : this._activeName();
         if (existing) this._beginAutoPlay(existing);
         this._update();
     }
@@ -719,8 +944,19 @@ class MusicIndicator extends PanelMenu.Button {
         let tries = 0;
         this._autoPlayId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
             const p = this._players.get(name);
-            if (this._destroyed || !p || !this._launching || tries++ >= 16 ||
-                p.PlaybackStatus === 'Playing') {
+            if (this._destroyed || !p || !this._launching || tries++ >= 16) {
+                this._autoPlayId = 0;
+                this._finishLaunch();
+                return GLib.SOURCE_REMOVE;
+            }
+            if (this._pendingUri) {              // a playlist was clicked while the app was closed
+                const uri = this._pendingUri;
+                p.OpenUriRemote(uri, (_r, err) => {
+                    if (!err && this._pendingUri === uri) this._pendingUri = null;
+                });
+                return GLib.SOURCE_CONTINUE;
+            }
+            if (p.PlaybackStatus === 'Playing') {
                 this._autoPlayId = 0;
                 this._finishLaunch();
                 return GLib.SOURCE_REMOVE;
@@ -732,6 +968,7 @@ class MusicIndicator extends PanelMenu.Button {
 
     _finishLaunch() {
         this._launching = false;
+        this._pendingUri = null;
         if (this._launchTimeoutId) { GLib.source_remove(this._launchTimeoutId); this._launchTimeoutId = 0; }
         if (this._autoPlayId) { GLib.source_remove(this._autoPlayId); this._autoPlayId = 0; }
         if (!this._destroyed) this._update();
@@ -1053,7 +1290,9 @@ class MusicIndicator extends PanelMenu.Button {
             if (proxy.PlaybackStatus === 'Playing' || !this._selected)
                 this._selected = name;
             this._update();
-            if (this._launching) this._beginAutoPlay(name);
+            if (this._launching &&
+                (!this._pendingUri || busId(name).toLowerCase().includes('spotify')))
+                this._beginAutoPlay(name);
         });
     }
 
@@ -1497,6 +1736,8 @@ class MusicIndicator extends PanelMenu.Button {
         this._stopScroll();
         this._closeMixer();
         this._launching = false;
+        this._coverQueue = [];
+        if (this._ensureId) { GLib.source_remove(this._ensureId); this._ensureId = 0; }
         if (this._launchTimeoutId) { GLib.source_remove(this._launchTimeoutId); this._launchTimeoutId = 0; }
         if (this._autoPlayId) { GLib.source_remove(this._autoPlayId); this._autoPlayId = 0; }
         this._stopHoverWatch();
