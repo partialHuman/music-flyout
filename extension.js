@@ -622,18 +622,31 @@ class MusicIndicator extends PanelMenu.Button {
         else btn.remove_style_class_name('mf-toggle-on');
     }
 
+    // Shell.BlurEffect renamed `sigma` to `radius` (radius = sigma * 2) in GNOME 46, and
+    // GJS throws on unknown constructor properties, so try the new name first.
+    _makeBlur() {
+        const base = {brightness: 0.8, mode: Shell.BlurMode.BACKGROUND};
+        for (const strength of [{radius: 60}, {sigma: 30}]) {
+            try {
+                return new Shell.BlurEffect({...base, ...strength});
+            } catch (e) { /* property not available on this version: try the next one */ }
+        }
+        return null;
+    }
+
     _applyAcrylic() {
         const actor = this.menu.actor ?? this.menu._boxPointer;
         actor.add_style_class_name('mf-menu');
         if (!this._cfg.blur) return;
-        try {
-            const blur = new Shell.BlurEffect({
-                brightness: 0.75, sigma: 30, mode: Shell.BlurMode.BACKGROUND,
-            });
-            actor.add_effect_with_name('mf-blur', blur);
-        } catch (e) {
-            logError(e, 'Music Flyout: blur unavailable');
+
+        const blur = this._makeBlur();
+        if (!blur) {
+            log('Music Flyout: Shell.BlurEffect could not be created, blur disabled');
+            return;
         }
+        // The blur region is rectangular, so keep the corners tighter to hide the overhang.
+        actor.add_style_class_name('mf-menu-blur');
+        actor.add_effect_with_name('mf-blur', blur);
     }
 
     // ============================================================ ACTIONS
@@ -1423,18 +1436,34 @@ export default class MusicFlyoutExtension extends Extension {
     }
 
     _create() {
-        const pos = this._settings.get_string('panel-position');
-        const box = ['left', 'center', 'right'].includes(pos) ? pos : 'center';
+        // [panel box, insert index]; index -1 appends at the far end of that box
+        const PLACES = {
+            'far-left': ['left', 0],
+            'left': ['left', -1],
+            'center': ['center', 0],
+            'right': ['right', 0],
+            'far-right': ['right', -1],
+        };
+        const [box, index] = PLACES[this._settings.get_string('panel-position')] ?? PLACES.center;
+
         this._indicator = new MusicIndicator(this._settings, this);
         const controls = this._indicator.controlsBox;
         const first = this._settings.get_boolean('controls-first');
-        const addControls = () =>
-            Main.panel.addToStatusArea(`${this.uuid}-controls`, controls, 0, box);
 
-        // Each addToStatusArea() inserts at index 0, so the item added last ends up leftmost.
-        if (controls && !first) addControls();
-        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, box);
-        if (controls && first) addControls();
+        const addMain = () => Main.panel.addToStatusArea(this.uuid, this._indicator, index, box);
+        const addControls = () => Main.panel.addToStatusArea(`${this.uuid}-controls`, controls, index, box);
+
+        // Inserting at index 0 puts the item added last leftmost; appending (-1) keeps add order.
+        let order;
+        if (index < 0)
+            order = first ? [addControls, addMain] : [addMain, addControls];
+        else
+            order = first ? [addMain, addControls] : [addControls, addMain];
+
+        for (const add of order) {
+            if (add === addControls && !controls) continue;
+            add();
+        }
     }
 
     _destroyIndicator() {
