@@ -209,7 +209,10 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
         // ---- Panel page --------------------------------------------------
         const panelPage = page('Panel', 'go-home-symbolic', [
             group('Placement', 'Where the indicator appears in the top panel.', [
-                choice('panel-position', 'Position', ['left', 'center', 'right'], ['Left', 'Center', 'Right']),
+                choice('panel-position', 'Position',
+                    ['far-left', 'left', 'center', 'right', 'far-right'],
+                    ['Far left', 'Left', 'Center', 'Right', 'Far right'],
+                    'Far left / far right are the outermost spots of the panel; Left / Right sit next to the panel centre.'),
                 toggle('controls-first', 'Show controls before track information',
                     'Place the playback buttons to the left of the player icon and text.'),
                 toggle('hide-when-idle', 'Hide when nothing is playing',
