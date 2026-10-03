@@ -11,6 +11,7 @@ rm -rf "$EXT_DIR"
 mkdir -p "$EXT_DIR"
 
 cp extension.js metadata.json prefs.js stylesheet.css "$EXT_DIR/"
+if [ -f spotify.js ]; then cp spotify.js "$EXT_DIR/"; fi
 
 if [ -d icons ]; then
     cp -r icons "$EXT_DIR/"
