@@ -3,7 +3,7 @@
   <schema id="org.gnome.shell.extensions.music-flyout" path="/org/gnome/shell/extensions/music-flyout/">
 
     <!-- Panel: placement -->
-    <key name="panel-position" type="s"><default>'center'</default><summary>Position: left, center or right</summary></key>
+    <key name="panel-position" type="s"><default>'center'</default><summary>Position: far-left, left, center, right or far-right</summary></key>
     <key name="controls-first" type="b"><default>false</default><summary>Show controls before track information</summary></key>
     <key name="hide-when-idle" type="b"><default>true</default><summary>Hide when no media player is running</summary></key>
 
