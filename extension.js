@@ -67,6 +67,8 @@ function readConfig(s) {
         clickLeft: str('click-left'),
         clickMiddle: str('click-middle'),
         clickRight: str('click-right'),
+        launchOnPlay: b('launch-on-play'),
+        launchApp: str('launch-app').trim(),
         hoverOpen: b('hover-open'),
         hoverOpenDelay: i('hover-open-delay'),
         hoverCloseDelay: i('hover-close-delay'),
@@ -116,6 +118,7 @@ const PlayerProxy = Gio.DBusProxy.makeProxyWrapper(`
 <node>
   <interface name="org.mpris.MediaPlayer2.Player">
     <method name="PlayPause"/>
+    <method name="Play"/>
     <method name="Pause"/>
     <method name="Next"/>
     <method name="Previous"/>
@@ -205,6 +208,10 @@ class MusicIndicator extends PanelMenu.Button {
         this._controlsBox?.connect('scroll-event', (_a, event) => this._onScroll(event));
         this._pressSeen = false;
         this._clickGesture = null;
+        this._launching = false;
+        this._launchName = '';
+        this._launchTimeoutId = 0;
+        this._autoPlayId = 0;
         this._setupClicks();
         this._setupHover();
         this.connect('key-press-event', (_a, ev) => {
@@ -316,7 +323,7 @@ class MusicIndicator extends PanelMenu.Button {
         add(c.panelShuffle, 'media-playlist-shuffle-symbolic', () => this._toggleShuffle(), this._shuffleBtns);
         add(c.panelPrevious, 'media-skip-backward-symbolic', () => this._active()?.PreviousRemote());
         add(c.panelSkipBack, 'media-seek-backward-symbolic', () => this._skip(-1), this._skipBtns);
-        add(c.panelPlayPause, 'media-playback-start-symbolic', () => this._active()?.PlayPauseRemote(), this._playBtns);
+        add(c.panelPlayPause, 'media-playback-start-symbolic', () => this._playPause(), this._playBtns);
         add(c.panelSkipForward, 'media-seek-forward-symbolic', () => this._skip(1), this._skipBtns);
         add(c.panelNext, 'media-skip-forward-symbolic', () => this._active()?.NextRemote());
         add(c.panelLoop, 'media-playlist-repeat-symbolic', () => this._cycleLoop(), this._loopBtns);
@@ -391,7 +398,7 @@ class MusicIndicator extends PanelMenu.Button {
 
     _runClickAction(action) {
         switch (action) {
-        case 'play-pause': this._active()?.PlayPauseRemote(); break;
+        case 'play-pause': this._playPause(); break;
         case 'open-card': this._toggleCard(); break;
         case 'next': this._active()?.NextRemote(); break;
         case 'previous': this._active()?.PreviousRemote(); break;
@@ -465,7 +472,7 @@ class MusicIndicator extends PanelMenu.Button {
             mid.add_child(this._reg(this._skipBtns, this._makeButton('media-seek-backward-symbolic', 18, '', () => this._skip(-1))));
         mid.add_child(this._makeButton('media-skip-backward-symbolic', 22, '', () => this._active()?.PreviousRemote()));
         mid.add_child(this._reg(this._playBtns,
-            this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._active()?.PlayPauseRemote())));
+            this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._playPause())));
         mid.add_child(this._makeButton('media-skip-forward-symbolic', 22, '', () => this._active()?.NextRemote()));
         if (c.cardSkip)
             mid.add_child(this._reg(this._skipBtns, this._makeButton('media-seek-forward-symbolic', 18, '', () => this._skip(1))));
@@ -580,7 +587,7 @@ class MusicIndicator extends PanelMenu.Button {
             add(this._reg(this._skipBtns, this._makeButton('media-seek-backward-symbolic', 18, '', () => this._skip(-1))));
         add(this._makeButton('media-skip-backward-symbolic', 22, '', () => this._active()?.PreviousRemote()));
         add(this._reg(this._playBtns,
-            this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._active()?.PlayPauseRemote())));
+            this._makeButton('media-playback-start-symbolic', 26, 'mf-play', () => this._playPause())));
         add(this._makeButton('media-skip-forward-symbolic', 22, '', () => this._active()?.NextRemote()));
         if (c.cardSkip)
             add(this._reg(this._skipBtns, this._makeButton('media-seek-forward-symbolic', 18, '', () => this._skip(1))));
@@ -650,6 +657,86 @@ class MusicIndicator extends PanelMenu.Button {
     }
 
     // ============================================================ ACTIONS
+    // ===================================================== START PLAYBACK
+    // Play/pause: toggles the active player, or – when no player is running – opens the
+    // configured app (Spotify by default) and presses play once it has registered on D-Bus.
+    _playPause() {
+        const p = this._active();
+        if (p) {
+            p.PlayPauseRemote();
+            return;
+        }
+        if (this._cfg.launchOnPlay) this._launchPlayer();
+    }
+
+    _findLaunchApp() {
+        const want = this._cfg.launchApp.toLowerCase();
+        if (!want) return null;
+        const sys = Shell.AppSystem.get_default();
+        const exact = sys.lookup_app(`${want}.desktop`);
+        if (exact) return exact.get_app_info();
+        for (const info of Gio.AppInfo.get_all()) {
+            const id = (info.get_id() ?? '').replace(/\.desktop$/, '').toLowerCase();
+            const nm = (info.get_name() ?? '').toLowerCase();
+            if (id === want || nm === want || id.includes(want)) return info;
+        }
+        return null;
+    }
+
+    _launchPlayer() {
+        if (this._launching) return;
+        const info = this._findLaunchApp();
+        if (!info) {
+            Main.notify('Music Flyout', `Couldn't find an application matching "${this._cfg.launchApp}".`);
+            return;
+        }
+        try {
+            const app = Shell.AppSystem.get_default().lookup_app(info.get_id());
+            if (app) app.activate();
+            else info.launch([], global.create_app_launch_context(0, -1));
+        } catch (e) {
+            logError(e, 'Music Flyout: could not launch player');
+            Main.notify('Music Flyout', `Couldn't start ${info.get_name()}.`);
+            return;
+        }
+        this._launching = true;
+        this._launchName = info.get_name();
+        // give up waiting after 40 s
+        this._launchTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 40, () => {
+            this._launchTimeoutId = 0;
+            this._finishLaunch();
+            return GLib.SOURCE_REMOVE;
+        });
+        // the player may already be on the bus (e.g. app running in the tray)
+        const existing = this._activeName();
+        if (existing) this._beginAutoPlay(existing);
+        this._update();
+    }
+
+    // Spotify registers on D-Bus before it can accept commands, so keep pressing Play until it sticks.
+    _beginAutoPlay(name) {
+        if (this._autoPlayId) return;
+        let tries = 0;
+        this._autoPlayId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1500, () => {
+            const p = this._players.get(name);
+            if (this._destroyed || !p || !this._launching || tries++ >= 16 ||
+                p.PlaybackStatus === 'Playing') {
+                this._autoPlayId = 0;
+                this._finishLaunch();
+                return GLib.SOURCE_REMOVE;
+            }
+            try { p.PlayRemote(); } catch (e) { /* not ready yet */ }
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    _finishLaunch() {
+        this._launching = false;
+        if (this._launchTimeoutId) { GLib.source_remove(this._launchTimeoutId); this._launchTimeoutId = 0; }
+        if (this._autoPlayId) { GLib.source_remove(this._autoPlayId); this._autoPlayId = 0; }
+        if (!this._destroyed) this._update();
+    }
+
     _toggleShuffle() {
         const p = this._active();
         if (!p || p.Shuffle === null || p.Shuffle === undefined) return;
@@ -966,6 +1053,7 @@ class MusicIndicator extends PanelMenu.Button {
             if (proxy.PlaybackStatus === 'Playing' || !this._selected)
                 this._selected = name;
             this._update();
+            if (this._launching) this._beginAutoPlay(name);
         });
     }
 
@@ -1109,9 +1197,10 @@ class MusicIndicator extends PanelMenu.Button {
             this._trackId = null;
             this._length = 0;
             this._position = 0;
-            this._title.text = 'Nothing playing';
+            const idleText = this._launching ? `Starting ${this._launchName}…` : 'Nothing playing';
+            this._title.text = idleText;
             this._artist.text = '';
-            this._setText('Nothing playing');
+            this._setText(idleText);
             this._setArt(null);
             this._syncControls(null);
             this._renderProgress();
@@ -1407,6 +1496,9 @@ class MusicIndicator extends PanelMenu.Button {
         this._stopPolling();
         this._stopScroll();
         this._closeMixer();
+        this._launching = false;
+        if (this._launchTimeoutId) { GLib.source_remove(this._launchTimeoutId); this._launchTimeoutId = 0; }
+        if (this._autoPlayId) { GLib.source_remove(this._autoPlayId); this._autoPlayId = 0; }
         this._stopHoverWatch();
         if (this._hoverOpenId) { GLib.source_remove(this._hoverOpenId); this._hoverOpenId = 0; }
         this._artCancellable?.cancel();
