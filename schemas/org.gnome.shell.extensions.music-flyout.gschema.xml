@@ -58,7 +58,9 @@
     <key name="cava-method" type="s"><default>'pulse'</default><summary>cava input method (pulse or pipewire)</summary></key>
 
     <!-- Card: appearance -->
-    <key name="card-style" type="s"><default>'default'</default><summary>Card style: default or compact</summary></key>
+    <key name="card-style" type="s"><default>'default'</default><summary>Card style: default, compact or playlists</summary></key>
+    <key name="spotify-client-id" type="s"><default>''</default><summary>Client ID of your Spotify app (for the Playlists card)</summary></key>
+    <key name="playlist-height" type="i"><range min="160" max="600"/><default>300</default><summary>Height of the playlist list (px)</summary></key>
     <key name="card-album-art" type="b"><default>true</default><summary>Show album art in the card</summary></key>
     <key name="album-art-size" type="s"><default>'large'</default><summary>Album art size: small, medium or large</summary></key>
     <key name="card-width" type="i"><range min="280" max="640"/><default>360</default><summary>Card width (px)</summary></key>
