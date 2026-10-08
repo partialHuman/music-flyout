@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 partialHuman
+
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -176,6 +179,7 @@ class MusicIndicator extends PanelMenu.Button {
         this._hoverWatchId = 0;
         this._outsideSince = 0;
         this._iconCache = new Map();
+        this._layoutIdleId = 0;
         this._plItems = Spotify.loadPlaylistCache();
         this._plLoadedAt = 0;
         this._plLoading = false;
@@ -371,15 +375,11 @@ class MusicIndicator extends PanelMenu.Button {
     // GNOME 49+ handles panel-button clicks with Clutter.ClickGesture instead of raw events.
     // Replace the stock gesture with our own so left/middle/right clicks reach us either way.
     _setupClicks() {
-        let path = 'legacy event only';
         try {
             if (typeof Clutter.ClickGesture === 'function') {
-                let removed = 0;
                 for (const a of this.get_actions?.() ?? []) {
-                    if (a instanceof Clutter.ClickGesture) {
+                    if (a instanceof Clutter.ClickGesture)
                         this.remove_action(a);
-                        removed++;
-                    }
                 }
                 const gesture = new Clutter.ClickGesture();
                 gesture.connect('recognize', () => {
@@ -393,12 +393,10 @@ class MusicIndicator extends PanelMenu.Button {
                 });
                 this.add_action(gesture);
                 this._clickGesture = gesture;
-                path = `ClickGesture (removed ${removed} stock)`;
             }
         } catch (e) {
             logError(e, 'Music Flyout: ClickGesture setup failed');
         }
-        log(`Music Flyout: click handling = ${path}`);
     }
 
     _onMouseButton(button) {
@@ -433,7 +431,6 @@ class MusicIndicator extends PanelMenu.Button {
     // ================================================================= CARD
     _buildCard() {
         const c = this._cfg;
-        const W = this._innerW;
         const content = vbox({style_class: 'mf-content', width: c.cardWidth});
 
         this._compact = c.cardStyle === 'compact';
@@ -1371,13 +1368,7 @@ class MusicIndicator extends PanelMenu.Button {
         for (const n of [entry, id, `${id}-client`])
             if (n) candidates.push(new Gio.ThemedIcon({name: n}));
 
-        let result = candidates.find(i => this._iconUsable(i)) ?? null;
-
-        // 4) bundled fallback for well-known players whose own icon can't be resolved
-        if (!result && wants.some(w => w.includes('spotify'))) {
-            const file = Gio.File.new_for_path(`${this._ext.path}/icons/spotify.svg`);
-            if (file.query_exists(null)) result = new Gio.FileIcon({file});
-        }
+        const result = candidates.find(i => this._iconUsable(i)) ?? null;
 
         this._iconCache.set(key, result);
         return result;
@@ -1514,10 +1505,13 @@ class MusicIndicator extends PanelMenu.Button {
 
         const [, nat] = this._label1.get_preferred_width(-1);
         if (nat === 0 && text && allowRetry) {   // not styled yet: measure again once idle
-            GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-                this._layoutText(false);
-                return GLib.SOURCE_REMOVE;
-            });
+            if (!this._layoutIdleId) {
+                this._layoutIdleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    this._layoutIdleId = 0;
+                    this._layoutText(false);
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
             return;
         }
         if (nat <= c.textWidth) return;
@@ -1736,6 +1730,7 @@ class MusicIndicator extends PanelMenu.Button {
         this._stopScroll();
         this._closeMixer();
         this._launching = false;
+        if (this._layoutIdleId) { GLib.source_remove(this._layoutIdleId); this._layoutIdleId = 0; }
         this._coverQueue = [];
         if (this._ensureId) { GLib.source_remove(this._ensureId); this._ensureId = 0; }
         if (this._launchTimeoutId) { GLib.source_remove(this._launchTimeoutId); this._launchTimeoutId = 0; }

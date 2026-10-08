@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 partialHuman
+
 // Spotify Web API helpers shared by the extension (playlist list) and the preferences (login).
 // Uses the Authorization Code + PKCE flow, so no client secret is needed – only the Client ID of a
 // Spotify app that the user creates on developer.spotify.com.
@@ -5,7 +8,18 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Soup from 'gi://Soup?version=3.0';
 
-Gio._promisify(Soup.Session.prototype, 'send_and_read_async', 'send_and_read_finish');
+// Promise wrapper (avoids patching Soup's prototype at import time)
+function sendAndRead(session, msg) {
+    return new Promise((resolve, reject) => {
+        session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null, (src, res) => {
+            try {
+                resolve(src.send_and_read_finish(res));
+            } catch (e) {
+                reject(e);
+            }
+        });
+    });
+}
 
 export const REDIRECT_PORT = 8898;
 export const REDIRECT_URI = `http://127.0.0.1:${REDIRECT_PORT}/callback`;
@@ -94,7 +108,7 @@ async function request(session, method, url, {headers = {}, form = null} = {}) {
     if (!msg) throw new Error('bad request');
     for (const [k, v] of Object.entries(headers))
         msg.get_request_headers().append(k, v);
-    const bytes = await session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const bytes = await sendAndRead(session, msg);
     const text = new TextDecoder().decode(bytes.get_data() ?? new Uint8Array());
     let json = null;
     try { json = text ? JSON.parse(text) : null; } catch (e) { /* not JSON */ }
@@ -104,7 +118,7 @@ async function request(session, method, url, {headers = {}, form = null} = {}) {
 export async function download(session, url, path) {
     const msg = Soup.Message.new('GET', url);
     if (!msg) return false;
-    const bytes = await session.send_and_read_async(msg, GLib.PRIORITY_DEFAULT, null);
+    const bytes = await sendAndRead(session, msg);
     if (msg.get_status() !== Soup.Status.OK) return false;
     GLib.mkdir_with_parents(GLib.path_get_dirname(path), 0o755);
     GLib.file_set_contents(path, bytes.get_data());

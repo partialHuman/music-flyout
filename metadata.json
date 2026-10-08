@@ -1,7 +1,7 @@
 {
   "uuid": "music-flyout@partialHuman",
   "name": "Music Flyout",
-  "description": "Fluent-style top-panel music controller with album art, progress bar, real audio visualizer (cava), shuffle/repeat and MPRIS player switching.",
+  "description": "A Fluent-style now-playing pill and flyout card for the top panel.\n\nControls any MPRIS player: album art, seek bar, shuffle/loop, scroll-wheel, click and hover actions, player switching, and a start-my-player-on-play option.\n\nOptional extras:\n* Install the 'cava' package for a real audio visualizer (otherwise animated bars are shown).\n* The 'Playlists' card style can list your Spotify playlists. It needs a one-time login with your own Spotify developer app; it only reads your playlists and contacts Spotify only after you connect.",
   "shell-version": [
     "45",
     "46",
@@ -10,6 +10,7 @@
     "49",
     "50"
   ],
+  "url": "https://github.com/partialHuman/music-flyout",
   "settings-schema": "org.gnome.shell.extensions.music-flyout",
-  "version": 14
+  "version-name": "2.0.0"
 }

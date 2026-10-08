@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Copyright (C) 2026 partialHuman
+
 import Adw from 'gi://Adw';
 import GObject from 'gi://GObject';
-import Gdk from 'gi://Gdk';
 import Soup from 'gi://Soup?version=3.0';
 import * as Spotify from './spotify.js';
 import Gio from 'gi://Gio';
@@ -238,12 +240,6 @@ export default class MusicFlyoutPrefs extends ExtensionPreferences {
 
         const redirectRow = new Adw.ActionRow({title: 'Redirect URI', subtitle: Spotify.REDIRECT_URI});
         redirectRow.subtitle_selectable = true;
-        const copyBtn = flatButton('Copy');
-        copyBtn.connect('clicked', () => {
-            Gdk.Display.get_default().get_clipboard().set(Spotify.REDIRECT_URI);
-            toast('Redirect URI copied.');
-        });
-        redirectRow.add_suffix(copyBtn);
 
         const clientIdRow = new Adw.EntryRow({title: 'Client ID'});
         settings.bind('spotify-client-id', clientIdRow, 'text', Gio.SettingsBindFlags.DEFAULT);
