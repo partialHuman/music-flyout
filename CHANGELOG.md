@@ -1,5 +1,11 @@
 # Changelog
 
+## v15
+- Fixed the source installer and uninstaller to derive the extension UUID from metadata.json.
+- Made source installation non-destructive by preserving the existing extension directory.
+- Updated Makefile packaging to include extension icons in release archives.
+- Updated source installation instructions.
+
 ## v14
 - Added a third **Playlists** card style.
 - Added Spotify Web API authentication and playlist retrieval.

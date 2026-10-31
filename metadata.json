@@ -12,5 +12,5 @@
   ],
   "url": "https://github.com/partialHuman/music-flyout",
   "settings-schema": "org.gnome.shell.extensions.music-flyout",
-  "version-name": "2.0.0"
+  "version-name": "2.0.1"
 }
