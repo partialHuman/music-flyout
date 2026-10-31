@@ -1,25 +1,27 @@
-UUID  := music-flyout@partialHuman
-DEST  := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
+UUID := $(shell python3 -c 'import json; print(json.load(open("metadata.json"))["uuid"])')
+DEST := $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 FILES := extension.js prefs.js spotify.js stylesheet.css metadata.json LICENSE \
          schemas/org.gnome.shell.extensions.music-flyout.gschema.xml
+ICON_FILES := $(shell find icons -type f)
 
 .PHONY: zip install uninstall clean
 
-# Zip for extensions.gnome.org / GitHub releases (only the files the extension needs)
 zip:
 	rm -f $(UUID).zip
-	zip $(UUID).zip $(FILES)
+	zip $(UUID).zip $(FILES) $(ICON_FILES)
 	@echo "Built $(UUID).zip"
 
-# Copy into your user extensions directory (log out and in afterwards on Wayland)
 install:
 	mkdir -p $(DEST)
-	cp --parents $(FILES) $(DEST)
+	cp --parents $(FILES) $(ICON_FILES) $(DEST)
 	glib-compile-schemas $(DEST)/schemas
 	@echo "Installed to $(DEST)"
+	@echo "On Wayland, log out and back in before enabling/reloading."
 
 uninstall:
-	rm -rf $(DEST)
+	-gnome-extensions disable $(UUID)
+	rm -rf -- $(DEST)
+	@echo "Removed $(UUID)"
 
 clean:
 	rm -f $(UUID).zip

@@ -152,17 +152,25 @@ You can also enable it from the **Extension Manager** app.
 
 ### From source
 
+Clone the repository into a normal development directory, then run:
+
 ```bash
-git clone https://github.com/partialHuman/music-flyout.git \
-  ~/.local/share/gnome-shell/extensions/music-flyout@partialHuman
-glib-compile-schemas ~/.local/share/gnome-shell/extensions/music-flyout@partialHuman/schemas
+git clone https://github.com/partialHuman/music-flyout.git ~/Projects/music-flyout
+cd ~/Projects/music-flyout
+./install.sh
 ```
 
-Or, from a checkout of the repository: `make install`.
+Alternatively, run `make install` from the repository directory.
 
-Log out and back in, then enable the extension as above.
+The installer reads the UUID from `metadata.json`, copies the extension files, and compiles the GSettings schema without deleting the existing extension directory.
 
-> **The folder name must match the `uuid` in `metadata.json`** (`music-flyout@partialHuman`). If you change one, change the other.
+On Wayland, log out and back in, then enable the extension:
+
+```bash
+gnome-extensions enable music-flyout@partialHuman
+```
+
+> The installed directory name must match the UUID in `metadata.json`. The installer and Makefile derive this value from that file.
 
 ### Opening the settings
 
